@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FaithForge AI API Cost Proposal</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; background: #fff; font-size: 13px; }
+
+  .page { max-width: 860px; margin: 0 auto; padding: 48px 56px; }
+
+  /* Header */
+  .header { border-bottom: 3px solid #1a365d; padding-bottom: 20px; margin-bottom: 32px; }
+  .logo-row { display: flex; justify-content: space-between; align-items: flex-start; }
+  .company { font-size: 20px; font-weight: 700; color: #1a365d; letter-spacing: 0.5px; }
+  .company span { color: #3b82f6; }
+  .doc-meta { text-align: right; font-size: 11px; color: #6b7280; line-height: 1.8; }
+  .doc-title { font-size: 22px; font-weight: 700; color: #1a365d; margin-top: 18px; }
+  .doc-subtitle { font-size: 13px; color: #4b5563; margin-top: 4px; }
+
+  /* Section headings */
+  h2 { font-size: 13px; font-weight: 700; color: #1a365d; text-transform: uppercase;
+       letter-spacing: 0.8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px;
+       margin: 32px 0 14px; }
+  h3 { font-size: 12px; font-weight: 700; color: #374151; margin: 18px 0 8px; }
+
+  p { line-height: 1.7; color: #374151; margin-bottom: 10px; }
+
+  /* Highlight box */
+  .highlight { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 14px 18px;
+               border-radius: 0 6px 6px 0; margin: 16px 0; }
+  .highlight .big { font-size: 28px; font-weight: 700; color: #1a365d; }
+  .highlight .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 12px; }
+  thead tr { background: #1a365d; color: #fff; }
+  thead th { padding: 9px 12px; text-align: left; font-weight: 600; font-size: 11px;
+             text-transform: uppercase; letter-spacing: 0.5px; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody tr:hover { background: #eff6ff; }
+  td { padding: 8px 12px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.bold { font-weight: 700; color: #1a365d; }
+  tfoot tr { background: #1e3a5f; }
+  tfoot td { padding: 9px 12px; font-weight: 700; color: #fff; font-size: 12px; }
+  tfoot td.num { text-align: right; }
+
+  /* Comparison table — highlight winner */
+  .winner { background: #ecfdf5 !important; }
+  .winner td { color: #065f46; font-weight: 600; }
+  .badge { display: inline-block; background: #059669; color: #fff; font-size: 10px;
+           padding: 2px 7px; border-radius: 99px; margin-left: 6px; font-weight: 700;
+           text-transform: uppercase; letter-spacing: 0.3px; }
+
+  /* Problem/solution cards */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+  .card.red { border-color: #fca5a5; background: #fff5f5; }
+  .card.green { border-color: #86efac; background: #f0fdf4; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                letter-spacing: 0.5px; margin-bottom: 8px; }
+  .card.red .card-title { color: #dc2626; }
+  .card.green .card-title { color: #059669; }
+  .card ul { padding-left: 16px; }
+  .card li { font-size: 12px; color: #374151; line-height: 1.8; }
+
+  /* ROI box */
+  .roi { background: #1a365d; color: #fff; border-radius: 8px; padding: 20px 24px; margin: 20px 0; }
+  .roi h3 { color: #93c5fd; margin-bottom: 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .roi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .roi-item .val { font-size: 22px; font-weight: 700; color: #fff; }
+  .roi-item .lbl { font-size: 10px; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
+
+  /* Footer */
+  .footer { border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 40px;
+            font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; }
+
+  @media print {
+    body { font-size: 12px; }
+    .page { padding: 20px 28px; }
+    h2 { margin-top: 20px; }
+    .cards { page-break-inside: avoid; }
+    .roi { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-row">
+      <div class="company">FaithForge <span>Technologies &amp; Consulting LLC</span></div>
+      <div class="doc-meta">
+        <div>Date: June 16, 2026</div>
+        <div>Prepared by: FaithForge Operations</div>
+        <div>Classification: Internal — Budget Approval</div>
+      </div>
+    </div>
+    <div class="doc-title">AI API Cost Proposal — GPT-4o-mini</div>
+    <div class="doc-subtitle">Monthly operating cost breakdown for the FaithForge Contract Opportunity Screener</div>
+  </div>
+
+  <!-- Summary -->
+  <h2>Executive Summary</h2>
+  <p>
+    FaithForge operates an internal AI-powered contract screening platform that automatically scans incoming emails for RFP/RFQ/grant opportunities, reviews solicitation documents, and generates submission-ready proposal packets. This system currently runs on the Groq free tier, which imposes hard daily token limits that are consistently exceeded during normal operations.
+  </p>
+  <p>
+    This document requests authorization to subscribe to the <strong>OpenAI GPT-4o-mini API</strong> (pay-as-you-go, no minimum commitment) to replace the free tier. Total projected cost is <strong>$2.62 per month</strong> based on current usage patterns.
+  </p>
+
+  <div class="highlight">
+    <div class="big">$2.62 / month</div>
+    <div class="label">Total projected API cost &nbsp;·&nbsp; $31.41 annually &nbsp;·&nbsp; No minimum commitment &nbsp;·&nbsp; Cancel anytime</div>
+  </div>
+
+  <!-- Current Problem -->
+  <h2>Current Problem — Groq Free Tier Limitations</h2>
+  <div class="cards">
+    <div class="card red">
+      <div class="card-title">Free Tier Constraints</div>
+      <ul>
+        <li>100,000 token daily hard cap</li>
+        <li>12,000 tokens/minute rate limit</li>
+        <li>Scanning 30 emails alone consumes 85,000 tokens — leaving almost nothing for packet builds</li>
+        <li>Packet builder takes 3–4 minutes due to forced retry waits on rate limit errors</li>
+        <li>Daily quota exhausted by mid-day, blocking all AI operations for the rest of the day</li>
+      </ul>
+    </div>
+    <div class="card green">
+      <div class="card-title">With GPT-4o-mini Paid</div>
+      <ul>
+        <li>No daily token cap</li>
+        <li>200,000 tokens/minute rate limit</li>
+        <li>Packet builds complete in ~30 seconds (vs 3–4 minutes)</li>
+        <li>All operations run without interruption throughout the day</li>
+        <li>Pay only for actual usage — no wasted quota</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- What the AI Does -->
+  <h2>AI Operations Breakdown</h2>
+  <p>The platform uses AI for three distinct operations. Each operation's token consumption was measured directly from the application code.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Operation</th>
+        <th>What It Does</th>
+        <th>Calls per Run</th>
+        <th>Tokens per Run</th>
+        <th>Daily Volume</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold">Proposal Packet Builder</td>
+        <td>Generates a full submission-ready proposal (Executive Summary, Scope of Work, Team Background, Budget) from opportunity data</td>
+        <td class="num">6</td>
+        <td class="num">28,511</td>
+        <td class="num">5 builds/day</td>
+      </tr>
+      <tr>
+        <td class="bold">Email Screener</td>
+        <td>Classifies each incoming email as Relevant / Possibly Relevant / Not Relevant and extracts structured opportunity data (title, agency, due dates, solicitation number)</td>
+        <td class="num">1</td>
+        <td class="num">3,328</td>
+        <td class="num">~30 emails/day</td>
+      </tr>
+      <tr>
+        <td class="bold">Document Reviewer</td>
+        <td>Reads uploaded solicitation documents and extracts compliance fields: eligibility, required forms, submission checklist, evaluation criteria, insurance requirements</td>
+        <td class="num">1</td>
+        <td class="num">4,570</td>
+        <td class="num">~3 reviews/day</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Monthly Cost Detail -->
+  <h2>Monthly Cost Detail</h2>
+  <p>Pricing: GPT-4o-mini — <strong>$0.15 per 1M input tokens</strong> / <strong>$0.60 per 1M output tokens</strong> (verified from OpenAI pricing page, June 2026).</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Operation</th>
+        <th>Monthly Volume</th>
+        <th>Input Tokens</th>
+        <th>Output Tokens</th>
+        <th>Input Cost</th>
+        <th>Output Cost</th>
+        <th>Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold">Packet Builder</td>
+        <td class="num">150 builds</td>
+        <td class="num">1.70M</td>
+        <td class="num">2.58M</td>
+        <td class="num">$0.25</td>
+        <td class="num">$1.55</td>
+        <td class="num bold">$1.80</td>
+      </tr>
+      <tr>
+        <td class="bold">Email Screener</td>
+        <td class="num">900 emails</td>
+        <td class="num">2.46M</td>
+        <td class="num">0.54M</td>
+        <td class="num">$0.37</td>
+        <td class="num">$0.32</td>
+        <td class="num bold">$0.69</td>
+      </tr>
+      <tr>
+        <td class="bold">Document Reviewer</td>
+        <td class="num">90 reviews</td>
+        <td class="num">0.28M</td>
+        <td class="num">0.14M</td>
+        <td class="num">$0.04</td>
+        <td class="num">$0.08</td>
+        <td class="num bold">$0.12</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4">TOTAL MONTHLY (all operations)</td>
+        <td class="num">$0.66</td>
+        <td class="num">$1.95</td>
+        <td class="num">$2.62</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <!-- Scenarios -->
+  <h2>Usage Scenario Analysis</h2>
+  <p>The table below shows projected cost under different usage intensities. Even at maximum conceivable usage the cost remains under $10/month.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Emails/Day</th>
+        <th>Doc Reviews/Day</th>
+        <th>Packet Builds/Day</th>
+        <th>Monthly Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="winner">
+        <td class="bold">Current / Projected <span class="badge">Recommended</span></td>
+        <td class="num">30</td>
+        <td class="num">3</td>
+        <td class="num">5</td>
+        <td class="num bold">$2.62</td>
+      </tr>
+      <tr>
+        <td>Heavy Usage</td>
+        <td class="num">100</td>
+        <td class="num">5</td>
+        <td class="num">5</td>
+        <td class="num">$5.22</td>
+      </tr>
+      <tr>
+        <td>Maximum / Worst Case</td>
+        <td class="num">200</td>
+        <td class="num">10</td>
+        <td class="num">5</td>
+        <td class="num">$8.11</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Alternatives Considered -->
+  <h2>Alternatives Considered</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Model</th>
+        <th>Monthly Cost</th>
+        <th>Quality for Proposals</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="winner">
+        <td class="bold">Recommended <span class="badge">Selected</span></td>
+        <td>GPT-4o-mini</td>
+        <td class="num bold">$2.62</td>
+        <td>Very Good</td>
+        <td>Best price-to-quality ratio for proposal writing</td>
+      </tr>
+      <tr>
+        <td>Option B</td>
+        <td>Groq Dev Tier (llama-3.3-70b)</td>
+        <td class="num">$3.25</td>
+        <td>Good</td>
+        <td>No code changes needed; still has per-minute rate limits</td>
+      </tr>
+      <tr>
+        <td>Option C</td>
+        <td>GPT-5.4-nano</td>
+        <td class="num">$6.30</td>
+        <td>Good</td>
+        <td>Newer but nano-tier; costs 2.4x more due to higher output pricing</td>
+      </tr>
+      <tr>
+        <td>Option D</td>
+        <td>Claude Haiku 4.5</td>
+        <td class="num">$14.50</td>
+        <td>Best</td>
+        <td>Highest quality prose; output cost ($4/1M) makes it expensive for this workload</td>
+      </tr>
+      <tr>
+        <td>Option E</td>
+        <td>Groq Free Tier (current)</td>
+        <td class="num">$0.00</td>
+        <td>Good</td>
+        <td>Daily quota exhausted mid-day; 3–4 min builds; operations blocked daily</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ROI -->
+  <div class="roi">
+    <h3>Return on Investment Context</h3>
+    <div class="roi-grid">
+      <div class="roi-item">
+        <div class="val">$2.62</div>
+        <div class="lbl">Monthly API cost</div>
+      </div>
+      <div class="roi-item">
+        <div class="val">$31.41</div>
+        <div class="lbl">Annual API cost</div>
+      </div>
+      <div class="roi-item">
+        <div class="val">1 contract</div>
+        <div class="lbl">Covers 10+ years of API cost</div>
+      </div>
+    </div>
+    <p style="margin-top:14px; font-size:11px; color:#bfdbfe; line-height:1.7;">
+      A single awarded contract — typically $50,000–$500,000 for the government PMO and consulting engagements FaithForge pursues — covers the entire annual API cost by a factor of 1,500x to 15,000x. The AI system exists to surface and accelerate pursuit of those contracts. The $31.41 annual cost is negligible relative to the business development value it delivers.
+    </p>
+  </div>
+
+  <!-- Setup -->
+  <h2>Setup &amp; Billing</h2>
+  <p><strong>No subscription or minimum commitment.</strong> OpenAI's API is billed strictly on usage — if the system runs less, the cost is proportionally lower. Setup requires:</p>
+  <ol style="padding-left:20px; line-height:2; color:#374151; font-size:12px;">
+    <li>Create an OpenAI account at <strong>platform.openai.com</strong></li>
+    <li>Add a payment method and purchase a minimum $5 credit</li>
+    <li>Generate an API key</li>
+    <li>Provide the API key to the development team — configuration change takes under 10 minutes</li>
+  </ol>
+  <p style="margin-top:10px;">A usage cap can be set in the OpenAI dashboard (e.g., $10/month hard limit) to ensure costs never exceed a defined ceiling, regardless of usage.</p>
+
+  <!-- Recommendation -->
+  <h2>Recommendation</h2>
+  <p>
+    Authorize the purchase of an OpenAI API key (GPT-4o-mini, pay-as-you-go) with an initial credit of <strong>$10</strong> — sufficient for approximately 4 months of normal operations. Set a monthly spend cap of <strong>$10</strong> in the OpenAI dashboard as a safeguard.
+  </p>
+  <p>
+    This eliminates all current free-tier limitations, reduces packet build time from 3–4 minutes to approximately 30 seconds, and ensures uninterrupted AI-assisted contract screening throughout the business day.
+  </p>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>FaithForge Technologies &amp; Consulting LLC &nbsp;|&nbsp; info@faithforgetech.com &nbsp;|&nbsp; 410-862-2975</span>
+    <span>Prepared June 16, 2026 &nbsp;|&nbsp; Internal — Budget Approval</span>
+  </div>
+
+</div>
+</body>
+</html>

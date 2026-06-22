@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="FaithForge AI Contract Screener", version="1.0.0")
 
 from passlib.context import CryptContext
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
 
 SESSION_TTL_DAYS = 30
 

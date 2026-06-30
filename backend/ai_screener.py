@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from openai import OpenAI
 from config import settings
 
@@ -221,6 +221,172 @@ def screen_email(
             "classification": "not_relevant",
             "relevance_score": 0,
             "classification_reasoning": "AI analysis failed to parse response",
+        }
+    return result
+
+
+ACCOUNT_SCORING_PROMPT = """Score this prospective target ACCOUNT for FaithForge's outbound client-acquisition pipeline.
+This is NOT an inbound solicitation — it's a company FaithForge may proactively pursue.
+
+ACCOUNT:
+Company: {company_name}
+Segment: {segment}
+Location: {location}
+Contact: {contact_name} ({contact_title})
+Known pain points: {pain_points}
+Notes: {notes}
+
+SCORING RUBRIC — build priority_score from these factors:
+- Client-type fit (0-40): government/nonprofit/healthcare/education/enterprise needing independent PMO, governance, or program oversight scores high.
+- Pain/need signal (0-30): clear evidence of stalled initiatives, transformation, compliance pressure, or execution gaps scores high; no known need scores low.
+- Geography/scope fit (0-15): Maryland/DC/federal or clearly national/remote scores high.
+- Reachability (0-15): a named decision-maker with title and contact info scores high; no contact scores low.
+
+Respond with ONLY a valid JSON object:
+{{
+  "priority_score": <integer 0-100>,
+  "priority_reason": "<2-3 sentences justifying the score by naming the factors that earned or lost points, referencing concrete details from THIS account>",
+  "suggested_pain_points": "<likely pain points FaithForge could address for this account, or null>",
+  "suggested_entry_offer": "<the single best Tier-1 entry offer (e.g. a targeted diagnostic or KPI review) to lead with, or null>"
+}}"""
+
+
+def score_account(
+    company_name: str,
+    segment: str = "",
+    location: str = "",
+    contact_name: str = "",
+    contact_title: str = "",
+    pain_points: str = "",
+    notes: str = "",
+) -> Dict[str, Any]:
+    prompt = ACCOUNT_SCORING_PROMPT.format(
+        company_name=company_name or "(unknown)",
+        segment=segment or "(unspecified)",
+        location=location or "(unspecified)",
+        contact_name=contact_name or "(unknown)",
+        contact_title=contact_title or "(unknown)",
+        pain_points=pain_points or "(none provided)",
+        notes=notes or "(none)",
+    )
+    raw = call_openai(prompt, max_tokens=800)
+    result = extract_json(raw)
+    if not result:
+        result = {"priority_score": 0, "priority_reason": "AI scoring failed to parse response"}
+    return result
+
+
+COLD_EMAIL_SYSTEM = """You are Bernedette Atong, Principal of FaithForge Technologies & Consulting LLC — a vendor-neutral program management firm in the Maryland/DC area. You write sharp, executive-level cold outreach: no fluff, no boilerplate, no vague "let's connect" asks. Every email names a specific pain, makes a single low-friction ask, and sounds like a busy principal wrote it in 10 minutes — not a marketing team."""
+
+COLD_EMAIL_PROMPT = """Write a {sequence_length}-email cold outreach sequence for this prospect.
+
+PROSPECT:
+Company: {company_name}
+Segment: {segment}
+Contact: {contact_name} ({contact_title})
+Known pain points: {pain_points}
+Planned entry offer: {entry_offer}
+
+FAITHFORGE CONTEXT (weave in naturally, don't list):
+- Vendor-neutral PMO, governance, and program oversight firm
+- Bridges the "Execution Accountability Gap" — stalled initiatives, misaligned teams, no decision-grade data
+- Bernedette's credentials: MSc, PMP, PgMP, PSM I, Lean Six Sigma — 8+ years across health systems, federal programs, workforce development
+- Tier-1 entry offers: PMO Diagnostic (2-week audit), KPI & Reporting Health Check, Governance Readiness Assessment, Change Readiness Workshop
+
+RULES FOR EACH EMAIL:
+- Under 175 words — tight paragraphs, no fluff
+- Reference a SPECIFIC pain point, not generic platitudes
+- Single, low-friction ask (not "let's explore synergies")
+- Signed: Bernedette Atong | FaithForge Technologies & Consulting
+- Email 1 (day 0): direct intro + name their problem + specific Tier-1 ask
+- Email 2 (day 5, if requested): brief follow-up referencing email 1, add one sharp insight or social proof
+- Email 3 (day 12, if requested): final value-add — offer a relevant resource, stat, or observation; soft close
+- Emails 4+ (days 21, 30): ultra-short check-ins or alternative angle
+
+Respond with ONLY valid JSON — no markdown, no preamble:
+{{
+  "emails": [
+    {{
+      "step": 1,
+      "subject": "<specific subject line — not clickbait, not generic>",
+      "body": "<email body as plain text with \\n for line breaks>",
+      "send_day": 0,
+      "purpose": "Initial outreach"
+    }}
+  ]
+}}"""
+
+
+def generate_cold_email(
+    company_name: str,
+    segment: str = "",
+    contact_name: str = "",
+    contact_title: str = "",
+    pain_points: str = "",
+    entry_offer: str = "",
+    sequence_length: int = 3,
+) -> Dict[str, Any]:
+    prompt = COLD_EMAIL_PROMPT.format(
+        company_name=company_name or "(unknown)",
+        segment=segment or "Government / Nonprofit / Enterprise",
+        contact_name=contact_name or "the appropriate leader",
+        contact_title=contact_title or "(title unknown)",
+        pain_points=pain_points or "(not specified — infer likely pain from company type and segment)",
+        entry_offer=entry_offer or "(not specified — choose the most appropriate Tier-1 entry offer)",
+        sequence_length=sequence_length,
+    )
+    raw = call_openai(prompt, system=COLD_EMAIL_SYSTEM, max_tokens=2400)
+    result = extract_json(raw)
+    if not result or "emails" not in result:
+        return {"emails": []}
+    return result
+
+
+GONOGO_PROMPT = """Perform a formal Bid / No-Bid assessment for FaithForge Technologies & Consulting LLC on this solicitation.
+
+FaithForge offers: independent vendor-neutral PMO, governance, program oversight, change management (ADKAR-certified), grants management, capacity building, and organizational readiness. Principal Bernedette Atong holds PMP and PgMP certifications, 8+ years experience. Primary geography: Maryland/DC/federal; remote national scope also considered.
+
+OPPORTUNITY DATA:
+{opportunity_data}
+
+SCORING RUBRIC — compute each factor, then sum:
+- Service Alignment (0-25): required services match FaithForge's core offerings? 20-25=exact PMO/governance/change match; 10-19=partial; 0-9=poor fit, purely trade/construction/vocational
+- Eligibility & Compliance (0-25): can FaithForge meet certifications, registrations, eligibility? 20-25=all requirements met; 10-19=most met, minor gaps; 0-9=significant gaps or likely disqualifiers
+- Risk Level (0-20): score HIGH when risk is LOW: 16-20=manageable risks, no disqualifiers; 8-15=some risk, manageable; 0-7=tight timeline, disqualifying clauses, major red flags
+- Contract Value & Scope (0-15): 12-15=strong value and clear scope; 6-11=moderate or unclear; 0-5=too small, out of scope, or undefined
+- Competitive Position (0-15): 12-15=strong differentiators (vendor-neutral, PgMP, ADKAR); 6-11=competitive; 0-5=commoditized or high incumbent advantage
+
+Verdict rules: score ≥ 70 → BID | score 45-69 → BID WITH CONDITIONS | score ≤ 44 → NO-BID
+
+Respond ONLY with valid JSON:
+{{
+  "verdict": "BID",
+  "score": <integer 0-100>,
+  "factors": {{
+    "alignment": <int 0-25>,
+    "eligibility": <int 0-25>,
+    "risk": <int 0-20>,
+    "value": <int 0-15>,
+    "competitive": <int 0-15>
+  }},
+  "recommendation": "<2-3 sentence executive recommendation specific to THIS opportunity>",
+  "conditions": ["<condition to resolve before bidding — empty list if BID or NO-BID>"],
+  "next_steps": ["<3-5 specific actionable next steps>"],
+  "red_flags": ["<specific red flags — empty list if none>"]
+}}"""
+
+
+def score_gonogo(opportunity_data: str) -> Dict[str, Any]:
+    prompt = GONOGO_PROMPT.format(opportunity_data=opportunity_data[:6000])
+    raw = call_openai(prompt, max_tokens=1200)
+    result = extract_json(raw)
+    if not result:
+        result = {
+            "verdict": "BID WITH CONDITIONS",
+            "score": 50,
+            "factors": {"alignment": 15, "eligibility": 12, "risk": 10, "value": 7, "competitive": 6},
+            "recommendation": "AI assessment failed to parse. Run assessment again.",
+            "conditions": [], "next_steps": [], "red_flags": [],
         }
     return result
 

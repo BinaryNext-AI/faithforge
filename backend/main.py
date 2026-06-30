@@ -17,11 +17,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 
 from database import get_db, init_db
-from models import Opportunity, Document, Packet, AuditLog, AppSetting, VALID_STATUSES
+from models import (
+    Opportunity, Document, Packet, AuditLog, AppSetting, VALID_STATUSES,
+    Account, ACCOUNT_STAGES,
+)
 from schemas import (
     OpportunityOut, OpportunityUpdate, StatusUpdate, DocumentOut,
     PacketOut, AuditLogOut, DashboardStats, ScanResult, AppSettingOut,
-    PacketBuildRequest
+    PacketBuildRequest,
+    AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
+    ColdEmailRequest, ColdEmailOut,
+    GoNoGoOut, ProposalGenerateRequest, ProposalGenerateOut,
 )
 from config import settings, UPLOAD_PATH, ALLOWED_EXTENSIONS
 
@@ -740,6 +746,291 @@ def get_audit_log(
     if opportunity_id:
         q = q.filter(AuditLog.opportunity_id == opportunity_id)
     return q.order_by(desc(AuditLog.timestamp)).offset(skip).limit(limit).all()
+
+
+# ─── CRM Accounts (Build 01) ───────────────────────────────────────────────────
+
+@app.get("/api/crm/stats", response_model=CRMStats)
+def crm_stats(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    total = db.query(Account).count()
+    stage_counts = (
+        db.query(Account.stage, func.count(Account.id))
+        .group_by(Account.stage)
+        .all()
+    )
+    by_stage = {stage: count for stage, count in stage_counts}
+    awaiting = db.query(Account).filter(Account.awaiting_reply == True).count()  # noqa: E712
+    actions_due = (
+        db.query(Account)
+        .filter(
+            Account.next_action_date.isnot(None),
+            Account.stage.notin_(["Won", "Lost"]),
+        )
+        .order_by(Account.next_action_date.asc())
+        .limit(10)
+        .all()
+    )
+    top_priority = (
+        db.query(Account)
+        .filter(Account.stage.notin_(["Won", "Lost"]))
+        .order_by(desc(Account.priority_score))
+        .limit(10)
+        .all()
+    )
+    return CRMStats(
+        total=total, by_stage=by_stage, awaiting_reply=awaiting,
+        actions_due=actions_due, top_priority=top_priority,
+    )
+
+
+@app.get("/api/accounts", response_model=List[AccountOut])
+def list_accounts(
+    stage: Optional[str] = Query(None),
+    segment: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    sort: str = Query("priority"),  # priority | recent | next_action
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    q = db.query(Account)
+    if stage:
+        q = q.filter(Account.stage == stage)
+    if segment:
+        q = q.filter(Account.segment == segment)
+    if search:
+        term = f"%{search}%"
+        q = q.filter(
+            Account.company_name.ilike(term)
+            | Account.contact_name.ilike(term)
+            | Account.contact_email.ilike(term)
+        )
+    if sort == "recent":
+        q = q.order_by(desc(Account.created_at))
+    elif sort == "next_action":
+        q = q.order_by(Account.next_action_date.asc().nullslast())
+    else:
+        q = q.order_by(desc(Account.priority_score), desc(Account.created_at))
+    return q.offset(skip).limit(limit).all()
+
+
+@app.post("/api/accounts", response_model=AccountOut)
+def create_account(body: AccountCreate, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    data = body.model_dump(exclude_none=True)
+    acc = Account(**data)
+    if not acc.stage:
+        acc.stage = "Not Contacted"
+    db.add(acc)
+    db.commit()
+    db.refresh(acc)
+    log_action(db, "account_created", details=json.dumps({"company": acc.company_name}))
+    return acc
+
+
+@app.get("/api/accounts/{account_id}", response_model=AccountOut)
+def get_account(account_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return acc
+
+
+@app.put("/api/accounts/{account_id}", response_model=AccountOut)
+def update_account(
+    account_id: int,
+    update: AccountUpdate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    for field, val in update.model_dump(exclude_unset=True).items():
+        setattr(acc, field, val)
+    acc.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(acc)
+    return acc
+
+
+@app.put("/api/accounts/{account_id}/stage", response_model=AccountOut)
+def update_account_stage(
+    account_id: int,
+    body: AccountStageUpdate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    if body.stage not in ACCOUNT_STAGES:
+        raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {', '.join(ACCOUNT_STAGES)}")
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    old = acc.stage
+    acc.stage = body.stage
+    # Auto-manage contact/reply tracking as the stage advances
+    if body.stage == "Contacted" and not acc.last_contacted_at:
+        acc.last_contacted_at = datetime.utcnow()
+        acc.awaiting_reply = True
+    if body.stage in ("Replied", "Meeting Scheduled", "Won", "Lost"):
+        acc.awaiting_reply = False
+    acc.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(acc)
+    log_action(db, "account_stage_changed", details=json.dumps({"company": acc.company_name, "from": old, "to": body.stage}))
+    return acc
+
+
+@app.delete("/api/accounts/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    log_action(db, "account_deleted", details=json.dumps({"company": acc.company_name}))
+    db.delete(acc)
+    db.commit()
+    return {"message": "Account deleted"}
+
+
+@app.post("/api/accounts/{account_id}/score", response_model=AccountOut)
+def score_account_endpoint(account_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    from ai_screener import score_account
+    try:
+        result = score_account(
+            company_name=acc.company_name or "",
+            segment=acc.segment or "",
+            location=acc.location or "",
+            contact_name=acc.contact_name or "",
+            contact_title=acc.contact_title or "",
+            pain_points=acc.pain_points or "",
+            notes=acc.notes or "",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI scoring failed: {str(e)}")
+    acc.priority_score = result.get("priority_score")
+    acc.priority_reason = result.get("priority_reason")
+    if not acc.pain_points and result.get("suggested_pain_points"):
+        acc.pain_points = result["suggested_pain_points"]
+    if not acc.entry_offer and result.get("suggested_entry_offer"):
+        acc.entry_offer = result["suggested_entry_offer"]
+    acc.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(acc)
+    log_action(db, "account_scored", details=json.dumps({"company": acc.company_name, "score": acc.priority_score}))
+    return acc
+
+
+# ─── Cold Email Generator (Build 02) ────────────────────────────────────────
+
+@app.post("/api/cold-email/generate", response_model=ColdEmailOut)
+def generate_cold_email_endpoint(
+    body: ColdEmailRequest,
+    _: None = Depends(require_auth),
+):
+    from ai_screener import generate_cold_email
+    try:
+        result = generate_cold_email(
+            company_name=body.company_name,
+            segment=body.segment or "",
+            contact_name=body.contact_name or "",
+            contact_title=body.contact_title or "",
+            pain_points=body.pain_points or "",
+            entry_offer=body.entry_offer or "",
+            sequence_length=body.sequence_length,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
+    return result
+
+
+# ─── Go/No-Go Assessment (Build 03) ─────────────────────────────────────────
+
+@app.post("/api/opportunities/{opportunity_id}/gonogo", response_model=GoNoGoOut)
+def gonogo_assessment(opportunity_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    from ai_screener import score_gonogo
+    fields = [
+        ("Title", opp.opportunity_title or opp.email_subject),
+        ("Agency", opp.agency_name),
+        ("Summary", opp.opportunity_summary),
+        ("Required Services", opp.required_services),
+        ("FaithForge Alignment", opp.faithforge_alignment),
+        ("Eligibility Requirements", opp.eligibility_requirements),
+        ("Certifications Required", opp.certifications_required),
+        ("Insurance Requirements", opp.insurance_requirements),
+        ("Disqualifying Requirements", opp.disqualifying_requirements),
+        ("Risk Concerns", opp.risk_concerns),
+        ("Estimated Value", opp.estimated_value),
+        ("Compliance Requirements", opp.compliance_requirements),
+        ("Submission Checklist (excerpt)", (opp.submission_checklist or "")[:400]),
+    ]
+    opportunity_data = "\n".join(f"{label}: {val}" for label, val in fields if val)
+    try:
+        result = score_gonogo(opportunity_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Go/No-Go assessment failed: {str(e)}")
+    log_action(db, "gonogo_assessed", opportunity_id,
+               json.dumps({"verdict": result.get("verdict"), "score": result.get("score")}))
+    return result
+
+
+# ─── Standalone Proposal Builder (Build 05) ──────────────────────────────────
+
+@app.post("/api/proposals/generate", response_model=ProposalGenerateOut)
+def generate_standalone_proposal(
+    body: ProposalGenerateRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    import uuid as _uuid
+    from packet_builder import build_packet
+    opp = Opportunity(
+        email_id=f"manual-{_uuid.uuid4().hex}",
+        email_subject=body.title,
+        email_from="Manual Entry",
+        opportunity_title=body.title,
+        agency_name=body.client_name,
+        opportunity_summary=(body.discovery_notes or "")[:2000],
+        required_services=body.required_services,
+        estimated_value=body.estimated_value,
+        faithforge_alignment=body.required_services,
+        relevance_classification="relevant",
+        relevance_score=85.0,
+        status="Packet Building",
+    )
+    db.add(opp)
+    db.commit()
+    db.refresh(opp)
+    opp_dict = {col.name: getattr(opp, col.name) for col in opp.__table__.columns}
+    discovery_text = f"=== Discovery Notes ===\n{body.discovery_notes}" if body.discovery_notes else ""
+    custom = []
+    if body.segment:
+        custom.append(f"Client segment: {body.segment}.")
+    if body.period_of_performance:
+        custom.append(f"Period of performance: {body.period_of_performance}.")
+    if body.custom_instructions:
+        custom.append(body.custom_instructions.strip())
+    custom_block = " ".join(custom)
+    try:
+        result = build_packet(opp_dict, [discovery_text] if discovery_text else [], custom_instructions=custom_block)
+    except Exception as e:
+        opp.status = "Under Review"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Proposal generation failed: {str(e)}")
+    db.query(Packet).filter(Packet.opportunity_id == opp.id).delete()
+    packet = Packet(opportunity_id=opp.id, content_json=result["content_json"], html_content=result["html_content"])
+    db.add(packet)
+    opp.status = "Packet Ready"
+    opp.updated_at = datetime.utcnow()
+    db.commit()
+    log_action(db, "standalone_proposal_generated", opp.id,
+               json.dumps({"title": body.title, "client": body.client_name}))
+    return {"opportunity_id": opp.id, "message": "Proposal generated successfully"}
 
 
 # ─── Microsoft Graph Auth ────────────────────────────────────────────────────

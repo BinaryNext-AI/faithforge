@@ -165,3 +165,68 @@ class SeenEmail(Base):
     email_id = Column(String, primary_key=True, index=True)
     seen_at = Column(DateTime, default=datetime.utcnow)
     outcome = Column(String)  # keyword_skip | not_relevant | relevant | possibly_relevant | error
+
+
+# ─── CRM: outbound target accounts (Build 01) ──────────────────────────────────
+
+ACCOUNT_STAGES = [
+    "Not Contacted",
+    "Contacted",
+    "Replied",
+    "Meeting Scheduled",
+    "Proposal Sent",
+    "Negotiation",
+    "Won",
+    "Lost",
+]
+
+ACCOUNT_SEGMENTS = [
+    "Government / Public Sector",
+    "Nonprofit",
+    "Healthcare",
+    "Education",
+    "Enterprise / Mid-Market",
+    "Other",
+]
+
+
+class Account(Base):
+    """An outbound target account in the client-acquisition pipeline.
+
+    Distinct from Opportunity (which is an inbound solicitation detected from
+    email). An Account is a company FaithForge is actively prospecting.
+    """
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Company
+    company_name = Column(String, nullable=False, index=True)
+    segment = Column(String, index=True)  # one of ACCOUNT_SEGMENTS
+    website = Column(String)
+    location = Column(String)
+
+    # Primary contact
+    contact_name = Column(String)
+    contact_title = Column(String)
+    contact_email = Column(String)
+    contact_phone = Column(String)
+
+    # Pipeline
+    stage = Column(String, default="Not Contacted", index=True)  # one of ACCOUNT_STAGES
+    priority_score = Column(Float)            # 0-100, AI-assigned
+    priority_reason = Column(Text)            # justification for the score
+
+    # Next-action tracking
+    last_contacted_at = Column(DateTime)
+    next_action = Column(Text)
+    next_action_date = Column(DateTime)
+    awaiting_reply = Column(Boolean, default=False)
+
+    # Context for outreach
+    pain_points = Column(Text)
+    entry_offer = Column(Text)
+    notes = Column(Text)
+    source = Column(String)

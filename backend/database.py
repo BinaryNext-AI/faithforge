@@ -25,7 +25,7 @@ def get_db():
 
 def init_db():
     from models import (
-        Opportunity, Document, Packet, AuditLog, AppSetting, User, Session, SeenEmail
+        Opportunity, Document, Packet, AuditLog, AppSetting, User, Session, SeenEmail, Account
     )
     Base.metadata.create_all(bind=engine)
     _migrate_add_columns()

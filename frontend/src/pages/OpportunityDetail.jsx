@@ -3,12 +3,13 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, AlertCircle, FileText, Trash2, Eye,
   Package, Mail, ExternalLink, CheckCircle,
-  AlertTriangle, RefreshCw
+  AlertTriangle, RefreshCw, ThumbsUp, ThumbsDown, HelpCircle,
+  ChevronDown, ChevronUp,
 } from 'lucide-react'
 import {
   getOpportunity, updateStatus, deleteOpportunity,
   uploadDocument, deleteDocument, reviewDocuments,
-  buildPacket, getPacket, emailPacket
+  buildPacket, getPacket, emailPacket, scoreGoNoGo,
 } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import FileUpload from '../components/FileUpload'
@@ -18,6 +19,139 @@ const VALID_STATUSES = [
   'EMMA Documents Needed', 'Documents Uploaded', 'Packet Building',
   'Packet Ready', 'Reviewed by User', 'Approved to Pursue', 'Declined',
 ]
+
+function GoNoGoPanel({ result }) {
+  const { verdict, score, factors, recommendation, conditions, next_steps, red_flags } = result
+  const verdictStyles = {
+    'BID': { bg: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-600 text-white', icon: ThumbsUp },
+    'BID WITH CONDITIONS': { bg: 'bg-amber-50 border-amber-200', badge: 'bg-amber-500 text-white', icon: HelpCircle },
+    'NO-BID': { bg: 'bg-red-50 border-red-200', badge: 'bg-red-600 text-white', icon: ThumbsDown },
+  }
+  const style = verdictStyles[verdict] || verdictStyles['BID WITH CONDITIONS']
+  const Icon = style.icon
+  const factorRows = [
+    { label: 'Service Alignment', key: 'alignment', max: 25 },
+    { label: 'Eligibility & Compliance', key: 'eligibility', max: 25 },
+    { label: 'Risk Level (higher = lower risk)', key: 'risk', max: 20 },
+    { label: 'Contract Value & Scope', key: 'value', max: 15 },
+    { label: 'Competitive Position', key: 'competitive', max: 15 },
+  ]
+  return (
+    <div className={`border rounded-xl p-4 space-y-4 ${style.bg}`}>
+      <div className="flex items-center gap-3">
+        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${style.badge}`}>
+          <Icon className="w-4 h-4" />{verdict}
+        </span>
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-gray-500">Overall Score</span>
+            <span className="text-sm font-bold text-gray-800">{score}/100</span>
+          </div>
+          <div className="w-full bg-white rounded-full h-2 overflow-hidden border border-gray-200">
+            <div
+              className={`h-2 rounded-full transition-all ${score >= 70 ? 'bg-emerald-500' : score >= 45 ? 'bg-amber-400' : 'bg-red-500'}`}
+              style={{ width: `${score}%` }}
+            />
+          </div>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {factorRows.map(({ label, key, max }) => {
+          const val = factors[key] ?? 0
+          const pct = Math.round((val / max) * 100)
+          return (
+            <div key={key} className="flex items-center gap-2 text-xs">
+              <span className="w-44 text-gray-600 shrink-0">{label}</span>
+              <div className="flex-1 bg-white rounded-full h-1.5 overflow-hidden border border-gray-200">
+                <div className="h-1.5 bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="w-12 text-right font-medium text-gray-700">{val}/{max}</span>
+            </div>
+          )
+        })}
+      </div>
+      {recommendation && <p className="text-sm text-gray-700">{recommendation}</p>}
+      {conditions?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-amber-700 mb-1">Conditions to Resolve</p>
+          <ul className="space-y-1">{conditions.map((c, i) => <li key={i} className="text-xs text-amber-800 flex gap-1.5"><span>•</span>{c}</li>)}</ul>
+        </div>
+      )}
+      {red_flags?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-red-600 mb-1">Red Flags</p>
+          <ul className="space-y-1">{red_flags.map((f, i) => <li key={i} className="text-xs text-red-700 flex gap-1.5"><AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />{f}</li>)}</ul>
+        </div>
+      )}
+      {next_steps?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1">Next Steps</p>
+          <ol className="space-y-1 list-decimal list-inside">{next_steps.map((s, i) => <li key={i} className="text-xs text-gray-700">{s}</li>)}</ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function parseChecklistItems(text) {
+  return (text || '').split('\n')
+    .map(line => line.replace(/^\d+\.\s*/, '').replace(/^[-*•]\s*/, '').replace(/^- \[[ x]\]\s*/i, '').trim())
+    .filter(line => line.length > 2)
+}
+
+function SubmissionChecklist({ text, opportunityId }) {
+  const storageKey = `ff_checklist_${opportunityId}`
+  const items = parseChecklistItems(text)
+  const [checked, setChecked] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey) || '{}') } catch { return {} }
+  })
+  const [expanded, setExpanded] = useState(true)
+
+  const toggle = (i) => {
+    const next = { ...checked, [i]: !checked[i] }
+    setChecked(next)
+    localStorage.setItem(storageKey, JSON.stringify(next))
+  }
+
+  const reset = () => {
+    setChecked({})
+    localStorage.removeItem(storageKey)
+  }
+
+  const done = items.filter((_, i) => checked[i]).length
+  const pct = items.length ? Math.round((done / items.length) * 100) : 0
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Submission Checklist</p>
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-semibold text-gray-600">{done}/{items.length} complete</span>
+          {done > 0 && <button onClick={reset} className="text-xs text-gray-400 hover:text-red-500">Reset</button>}
+          <button onClick={() => setExpanded(e => !e)} className="text-gray-400 hover:text-gray-600">
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+      <div className="w-full bg-gray-100 rounded-full h-1.5 mb-3">
+        <div className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+      </div>
+      {expanded && (
+        <ul className="space-y-1.5">
+          {items.map((item, i) => (
+            <li key={i} onClick={() => toggle(i)}
+              className={`flex items-start gap-2.5 text-sm cursor-pointer rounded-lg px-2 py-1.5 hover:bg-gray-50 transition-colors ${checked[i] ? 'text-gray-400' : 'text-gray-800'}`}>
+              <div className={`mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center transition-colors ${checked[i] ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 bg-white'}`}>
+                {checked[i] && <CheckCircle className="w-3 h-3 text-white" />}
+              </div>
+              <span className={checked[i] ? 'line-through' : ''}>{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 function Field({ label, value, mono = false, link = false }) {
   if (!value) return null
@@ -48,6 +182,8 @@ export default function OpportunityDetail() {
   const [showPacket, setShowPacket] = useState(false)
   const [toast, setToast] = useState(null)
   const [customInstructions, setCustomInstructions] = useState('')
+  const [gonogo, setGonogo] = useState(null)
+  const [gonogoLoading, setGonogoLoading] = useState(false)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -138,6 +274,18 @@ export default function OpportunityDetail() {
       showToast(e.message, 'error')
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  const handleGoNoGo = async () => {
+    setGonogoLoading(true)
+    try {
+      const result = await scoreGoNoGo(id)
+      setGonogo(result)
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setGonogoLoading(false)
     }
   }
 
@@ -294,7 +442,11 @@ export default function OpportunityDetail() {
             <Field label="Pricing / Budget Format" value={opp.pricing_requirements} />
             <Field label="Proposal Format" value={opp.proposal_format} />
             <div className="sm:col-span-2"><Field label="Evaluation Criteria" value={opp.evaluation_criteria} /></div>
-            <div className="sm:col-span-2"><Field label="Submission Checklist" value={opp.submission_checklist} /></div>
+            {opp.submission_checklist && (
+              <div className="sm:col-span-2">
+                <SubmissionChecklist text={opp.submission_checklist} opportunityId={opp.id} />
+              </div>
+            )}
             <div className="sm:col-span-2"><Field label="Required Forms" value={opp.required_forms} /></div>
             <div className="sm:col-span-2"><Field label="Required Attachments" value={opp.required_attachments} /></div>
             <div className="sm:col-span-2"><Field label="Compliance Requirements" value={opp.compliance_requirements} /></div>
@@ -316,6 +468,29 @@ export default function OpportunityDetail() {
           </div>
         </div>
 
+      </div>
+
+      {/* Go/No-Go Assessment */}
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900 text-sm">Go / No-Go Assessment</h3>
+          <button
+            onClick={handleGoNoGo}
+            disabled={gonogoLoading}
+            className="btn-secondary text-xs"
+          >
+            {gonogoLoading
+              ? <><Loader2 className="w-3 h-3 animate-spin" /> Running…</>
+              : gonogo
+              ? <><RefreshCw className="w-3 h-3" /> Re-assess</>
+              : <><HelpCircle className="w-3 h-3" /> Run Assessment</>
+            }
+          </button>
+        </div>
+        {!gonogo && !gonogoLoading && (
+          <p className="text-sm text-gray-400">Run the AI assessment to get a structured Bid / No-Bid recommendation based on FaithForge's ICP, eligibility, risk, and competitive position.</p>
+        )}
+        {gonogo && <GoNoGoPanel result={gonogo} />}
       </div>
 
       {/* Documents */}

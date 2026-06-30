@@ -69,6 +69,26 @@ export const buildPacket = (opportunityId, customInstructions = '') =>
 export const getPacket = (opportunityId) => api.get(`/opportunities/${opportunityId}/packet`).then(r => r.data)
 export const emailPacket = (opportunityId) => api.post(`/opportunities/${opportunityId}/packet/email`).then(r => r.data)
 
+// CRM Accounts
+export const getCrmStats = () => api.get('/crm/stats').then(r => r.data)
+export const getAccounts = (params = {}) => api.get('/accounts', { params }).then(r => r.data)
+export const getAccount = (id) => api.get(`/accounts/${id}`).then(r => r.data)
+export const createAccount = (data) => api.post('/accounts', data).then(r => r.data)
+export const updateAccount = (id, data) => api.put(`/accounts/${id}`, data).then(r => r.data)
+export const updateAccountStage = (id, stage) => api.put(`/accounts/${id}/stage`, { stage }).then(r => r.data)
+export const deleteAccount = (id) => api.delete(`/accounts/${id}`).then(r => r.data)
+export const scoreAccount = (id) => api.post(`/accounts/${id}/score`).then(r => r.data)
+
+// Cold Email Generator
+export const generateColdEmail = (data) => api.post('/cold-email/generate', data).then(r => r.data)
+
+// Go/No-Go Assessment
+export const scoreGoNoGo = (id) => api.post(`/opportunities/${id}/gonogo`).then(r => r.data)
+
+// Standalone Proposal Builder
+export const generateStandaloneProposal = (data) =>
+  api.post('/proposals/generate', data, { timeout: 600000 }).then(r => r.data)
+
 // Audit
 export const getAuditLog = (params = {}) => api.get('/audit', { params }).then(r => r.data)
 

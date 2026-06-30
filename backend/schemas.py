@@ -132,3 +132,110 @@ class AppSettingOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─── CRM Accounts (Build 01) ───────────────────────────────────────────────────
+
+class AccountBase(BaseModel):
+    company_name: Optional[str] = None
+    segment: Optional[str] = None
+    website: Optional[str] = None
+    location: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_title: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    stage: Optional[str] = None
+    priority_score: Optional[float] = None
+    priority_reason: Optional[str] = None
+    last_contacted_at: Optional[datetime] = None
+    next_action: Optional[str] = None
+    next_action_date: Optional[datetime] = None
+    awaiting_reply: Optional[bool] = None
+    pain_points: Optional[str] = None
+    entry_offer: Optional[str] = None
+    notes: Optional[str] = None
+    source: Optional[str] = None
+
+
+class AccountCreate(AccountBase):
+    company_name: str = Field(..., min_length=1)
+
+
+class AccountUpdate(AccountBase):
+    pass
+
+
+class AccountOut(AccountBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AccountStageUpdate(BaseModel):
+    stage: str
+
+
+class CRMStats(BaseModel):
+    total: int
+    by_stage: dict
+    awaiting_reply: int
+    actions_due: List[AccountOut] = []
+    top_priority: List[AccountOut] = []
+
+
+# ─── Cold Email Generator (Build 02) ─────────────────────────────────────────
+
+class ColdEmailRequest(BaseModel):
+    company_name: str = Field(..., min_length=1)
+    segment: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_title: Optional[str] = None
+    pain_points: Optional[str] = None
+    entry_offer: Optional[str] = None
+    sequence_length: int = Field(default=3, ge=1, le=5)
+
+
+class ColdEmailItem(BaseModel):
+    step: int
+    subject: str
+    body: str
+    send_day: int
+    purpose: str
+
+
+class ColdEmailOut(BaseModel):
+    emails: List[ColdEmailItem]
+
+
+# ─── Go/No-Go Assessment (Build 03) ──────────────────────────────────────────
+
+class GoNoGoOut(BaseModel):
+    verdict: str
+    score: int
+    factors: dict
+    recommendation: str
+    conditions: List[str] = []
+    next_steps: List[str] = []
+    red_flags: List[str] = []
+
+
+# ─── Standalone Proposal Builder (Build 05) ───────────────────────────────────
+
+class ProposalGenerateRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    client_name: Optional[str] = None
+    segment: Optional[str] = None
+    required_services: Optional[str] = None
+    estimated_value: Optional[str] = None
+    period_of_performance: Optional[str] = None
+    discovery_notes: str = Field(..., min_length=10)
+    custom_instructions: Optional[str] = None
+
+
+class ProposalGenerateOut(BaseModel):
+    opportunity_id: int
+    message: str

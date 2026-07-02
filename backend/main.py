@@ -622,9 +622,8 @@ def review_documents_endpoint(
     from ai_screener import review_documents
     doc_texts = []
     for doc in opp.documents:
-        if os.path.exists(doc.file_path):
-            text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-            doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 20000)}")
+        text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 20000)}")
     opp_context = f"""Title: {opp.opportunity_title or opp.email_subject}
 Agency: {opp.agency_name}
 Solicitation: {opp.solicitation_number}
@@ -692,9 +691,8 @@ def build_packet_endpoint(
     db.commit()
     doc_texts = []
     for doc in opp.documents:
-        if os.path.exists(doc.file_path):
-            text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-            doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
+        text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
     opp_dict = {
         col.name: getattr(opp, col.name)
         for col in opp.__table__.columns
@@ -751,8 +749,6 @@ def complete_draft_endpoint(
         draft_doc = next((d for d in opp.documents if d.id == draft_document_id), None)
         if not draft_doc:
             raise HTTPException(status_code=404, detail="Draft document not found on this opportunity.")
-        if not os.path.exists(draft_doc.file_path):
-            raise HTTPException(status_code=404, detail="Draft document file is missing on disk.")
         draft_text = truncate_for_ai(process_document(draft_doc.file_path, UPLOAD_PATH, draft_doc.file_content), 40000)
 
     if not draft_text:
@@ -763,9 +759,8 @@ def complete_draft_endpoint(
     for doc in opp.documents:
         if doc.id == draft_document_id:
             continue
-        if os.path.exists(doc.file_path):
-            text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-            rfp_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
+        text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+        rfp_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
 
     opp.status = "Packet Building"
     opp.updated_at = datetime.utcnow()

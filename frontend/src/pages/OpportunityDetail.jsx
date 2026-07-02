@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, AlertCircle, FileText, Trash2, Eye,
@@ -256,10 +256,13 @@ export default function OpportunityDetail() {
   const [revisionInstruction, setRevisionInstruction] = useState('')
   const [revising, setRevising] = useState(false)
   const [lastRevision, setLastRevision] = useState(null)
-  const [draftMode, setDraftMode] = useState('document')
+  const [draftMode, setDraftMode] = useState('upload')
   const [draftDocumentId, setDraftDocumentId] = useState('')
   const [draftText, setDraftText] = useState('')
   const [draftAnalysis, setDraftAnalysis] = useState(null)
+  const [uploadingDraft, setUploadingDraft] = useState(false)
+  const [draftUploadError, setDraftUploadError] = useState(null)
+  const draftFileInputRef = useRef(null)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -343,12 +346,36 @@ export default function OpportunityDetail() {
     finally { setActionLoading(null) }
   }
 
+  const handleDraftFileSelected = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const allowed = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.zip']
+    const ext = '.' + file.name.split('.').pop().toLowerCase()
+    if (!allowed.includes(ext)) {
+      setDraftUploadError('Unsupported file type. Allowed: PDF, Word, Excel, ZIP')
+      return
+    }
+    setDraftUploadError(null)
+    setUploadingDraft(true)
+    try {
+      const doc = await uploadDocument(id, file)
+      await load()
+      setDraftDocumentId(String(doc.id))
+      setDraftMode('document')
+    } catch (err) {
+      setDraftUploadError(err.message)
+    } finally {
+      setUploadingDraft(false)
+    }
+  }
+
   const handleCompleteDraft = async () => {
     setActionLoading('complete-draft')
     try {
-      const payload = draftMode === 'document'
-        ? { document_id: Number(draftDocumentId), custom_instructions: customInstructions }
-        : { draft_text: draftText, custom_instructions: customInstructions }
+      const payload = draftMode === 'paste'
+        ? { draft_text: draftText, custom_instructions: customInstructions }
+        : { document_id: Number(draftDocumentId), custom_instructions: customInstructions }
       const result = await completeDraftProposal(id, payload)
       setPacket(result.packet)
       setDraftAnalysis(result.analysis)
@@ -742,10 +769,14 @@ export default function OpportunityDetail() {
               <p className="text-xs text-indigo-600 mt-0.5">AI compares your draft against the RFP and FaithForge's knowledge base, fills the gaps, and produces a submission-ready version.</p>
             </div>
 
-            <div className="flex items-center gap-4 text-xs text-gray-700">
+            <div className="flex items-center gap-4 text-xs text-gray-700 flex-wrap">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" checked={draftMode === 'upload'} onChange={() => setDraftMode('upload')} />
+                Upload from my computer
+              </label>
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input type="radio" checked={draftMode === 'document'} onChange={() => setDraftMode('document')} />
-                Pick an uploaded document
+                Pick an already-uploaded document
               </label>
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input type="radio" checked={draftMode === 'paste'} onChange={() => setDraftMode('paste')} />
@@ -753,16 +784,50 @@ export default function OpportunityDetail() {
               </label>
             </div>
 
-            {draftMode === 'document' ? (
+            {draftMode === 'upload' && (
+              <div className="space-y-2">
+                <input
+                  ref={draftFileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.docx,.doc,.xlsx,.xls,.zip"
+                  onChange={handleDraftFileSelected}
+                />
+                <button
+                  type="button"
+                  onClick={() => draftFileInputRef.current?.click()}
+                  disabled={uploadingDraft}
+                  className="w-full border-2 border-dashed border-indigo-300 rounded-xl p-5 text-center hover:border-indigo-400 hover:bg-indigo-100/40 transition-colors"
+                >
+                  {uploadingDraft ? (
+                    <span className="flex items-center justify-center gap-2 text-sm text-indigo-700"><Loader2 className="w-4 h-4 animate-spin" />Uploading…</span>
+                  ) : draftDocumentId ? (
+                    <span className="flex items-center justify-center gap-2 text-sm text-emerald-700">
+                      <CheckCircle className="w-4 h-4" />
+                      {opp.documents?.find(d => String(d.id) === String(draftDocumentId))?.original_filename || 'File uploaded'} — click to replace
+                    </span>
+                  ) : (
+                    <span className="text-sm text-indigo-700">Click to browse your computer for the draft proposal (PDF, Word, Excel)</span>
+                  )}
+                </button>
+                {draftUploadError && (
+                  <p className="text-xs text-red-600">{draftUploadError}</p>
+                )}
+              </div>
+            )}
+
+            {draftMode === 'document' && (
               hasDocuments ? (
                 <select value={draftDocumentId} onChange={e => setDraftDocumentId(e.target.value)} className="input text-sm">
                   <option value="">Select a document…</option>
                   {opp.documents.map(d => <option key={d.id} value={d.id}>{d.original_filename}</option>)}
                 </select>
               ) : (
-                <p className="text-xs text-gray-400">No documents uploaded yet — upload the draft in Step 1, or paste its text instead.</p>
+                <p className="text-xs text-gray-400">No documents uploaded yet — use "Upload from my computer" above, or paste its text instead.</p>
               )
-            ) : (
+            )}
+
+            {draftMode === 'paste' && (
               <textarea
                 value={draftText}
                 onChange={e => setDraftText(e.target.value)}
@@ -774,7 +839,7 @@ export default function OpportunityDetail() {
 
             <button
               onClick={handleCompleteDraft}
-              disabled={actionLoading === 'complete-draft' || (draftMode === 'document' ? !draftDocumentId : !draftText.trim())}
+              disabled={actionLoading === 'complete-draft' || uploadingDraft || (draftMode === 'paste' ? !draftText.trim() : !draftDocumentId)}
               className="btn-primary text-xs px-4 py-2"
             >
               {actionLoading === 'complete-draft'

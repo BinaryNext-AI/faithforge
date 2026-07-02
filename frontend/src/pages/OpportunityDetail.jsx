@@ -863,6 +863,13 @@ export default function OpportunityDetail() {
 
             {draftAnalysis && (
               <div className="mt-2 p-3 bg-white border border-indigo-100 rounded-lg space-y-2.5 text-xs">
+                {draftAnalysis.checklist_items_addressed?.length > 0 && (
+                  <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="font-semibold text-blue-800 mb-1">Checklist items this draft appears to already cover</p>
+                    <p className="text-blue-600 mb-1.5">AI suggestion only — verify each one, then check it off yourself in Step 3 above.</p>
+                    <ul className="space-y-0.5">{draftAnalysis.checklist_items_addressed.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
                 {draftAnalysis.strengths?.length > 0 && (
                   <div>
                     <p className="font-semibold text-emerald-700 mb-1">Strengths</p>

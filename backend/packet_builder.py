@@ -614,14 +614,17 @@ ANALYZE_DRAFT_PROMPT = """You are analyzing an existing draft proposal against t
 ## EXISTING DRAFT PROPOSAL
 {draft_text}
 
-Compare the draft against the requirements above and FaithForge's knowledge base (provided in the system prompt). Return ONLY a valid JSON object (no prose) with this schema:
+Compare the draft against the requirements above and FaithForge's knowledge base (provided in the system prompt). Pay particular attention to the "Submission Checklist" line inside COMPLIANCE & SUBMISSION REQUIREMENTS — for each item on that checklist, check whether the draft already appears to contain or satisfy it. Return ONLY a valid JSON object (no prose) with this schema:
 {{
   "strengths": ["specific things the draft already does well"],
   "gaps": ["specific requirements or claims the draft does not address or supports weakly"],
   "missing_sections": ["standard proposal sections absent from the draft, e.g. Budget, Team Background, Risk Management"],
   "compliance_risks": ["specific compliance/submission requirements the draft may fail to meet"],
-  "recommendations": ["concrete, specific fixes — reference exact FaithForge facts (rates, credentials, case studies) that should be used to fill each gap"]
+  "recommendations": ["concrete, specific fixes — reference exact FaithForge facts (rates, credentials, case studies) that should be used to fill each gap"],
+  "checklist_items_addressed": ["for each submission-checklist item the draft appears to already satisfy, one string in the form '<checklist item text> — <one-sentence evidence from the draft>'. Only include items you found real evidence for in the draft text — do not guess. Empty array if none found or no checklist exists."]
 }}
+
+IMPORTANT on checklist_items_addressed: this is a suggestion for a human to verify, not a final determination — never claim an item is satisfied unless the draft text actually contains it. When in doubt, leave it out of this list and mention it under "gaps" instead.
 
 Be specific — cite exact requirements not addressed, and note anywhere the draft's numbers or claims are unsupported or should be replaced with FaithForge's real knowledge-base facts."""
 
@@ -702,7 +705,7 @@ def complete_draft_packet(
     )
     analysis = _extract_json(analysis_raw) or {
         "strengths": [], "gaps": [], "missing_sections": [],
-        "compliance_risks": [], "recommendations": [],
+        "compliance_risks": [], "recommendations": [], "checklist_items_addressed": [],
     }
 
     # ── Stage 2: Completion ──

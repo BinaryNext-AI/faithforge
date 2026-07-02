@@ -108,10 +108,6 @@ export const generateColdEmail = (data) => api.post('/cold-email/generate', data
 // Go/No-Go Assessment
 export const scoreGoNoGo = (id) => api.post(`/opportunities/${id}/gonogo`).then(r => r.data)
 
-// Standalone Proposal Builder
-export const generateStandaloneProposal = (data) =>
-  api.post('/proposals/generate', data, { timeout: 600000 }).then(r => r.data)
-
 // Audit
 export const getAuditLog = (params = {}) => api.get('/audit', { params }).then(r => r.data)
 

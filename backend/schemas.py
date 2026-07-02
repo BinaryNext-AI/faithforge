@@ -247,21 +247,3 @@ class GoNoGoOut(BaseModel):
     conditions: List[str] = []
     next_steps: List[str] = []
     red_flags: List[str] = []
-
-
-# ─── Standalone Proposal Builder (Build 05) ───────────────────────────────────
-
-class ProposalGenerateRequest(BaseModel):
-    title: str = Field(..., min_length=1)
-    client_name: Optional[str] = None
-    segment: Optional[str] = None
-    required_services: Optional[str] = None
-    estimated_value: Optional[str] = None
-    period_of_performance: Optional[str] = None
-    discovery_notes: str = Field(..., min_length=10)
-    custom_instructions: Optional[str] = None
-
-
-class ProposalGenerateOut(BaseModel):
-    opportunity_id: int
-    message: str

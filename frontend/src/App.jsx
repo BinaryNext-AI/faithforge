@@ -8,7 +8,6 @@ import OpportunityDetail from './pages/OpportunityDetail'
 import Accounts from './pages/Accounts'
 import AccountDetail from './pages/AccountDetail'
 import ColdEmail from './pages/ColdEmail'
-import ProposalBuilder from './pages/ProposalBuilder'
 import Settings from './pages/Settings'
 import AuditLog from './pages/AuditLog'
 
@@ -29,7 +28,6 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="accounts/:id" element={<AccountDetail />} />
           <Route path="cold-email" element={<ColdEmail />} />
-          <Route path="proposal-builder" element={<ProposalBuilder />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
         </Route>

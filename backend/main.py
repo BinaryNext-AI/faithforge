@@ -28,7 +28,7 @@ from schemas import (
     PacketBuildRequest, CompleteDraftRequest, CompleteDraftOut, RevisePacketRequest,
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
     ColdEmailRequest, ColdEmailOut,
-    GoNoGoOut, ProposalGenerateRequest, ProposalGenerateOut,
+    GoNoGoOut,
 )
 from config import settings, UPLOAD_PATH, ALLOWED_EXTENSIONS
 
@@ -1167,60 +1167,6 @@ def gonogo_assessment(opportunity_id: int, db: Session = Depends(get_db), _: Non
     log_action(db, "gonogo_assessed", opportunity_id,
                json.dumps({"verdict": result.get("verdict"), "score": result.get("score")}))
     return result
-
-
-# ─── Standalone Proposal Builder (Build 05) ──────────────────────────────────
-
-@app.post("/api/proposals/generate", response_model=ProposalGenerateOut)
-def generate_standalone_proposal(
-    body: ProposalGenerateRequest,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_auth),
-):
-    import uuid as _uuid
-    from packet_builder import build_packet
-    opp = Opportunity(
-        email_id=f"manual-{_uuid.uuid4().hex}",
-        email_subject=body.title,
-        email_from="Manual Entry",
-        opportunity_title=body.title,
-        agency_name=body.client_name,
-        opportunity_summary=(body.discovery_notes or "")[:2000],
-        required_services=body.required_services,
-        estimated_value=body.estimated_value,
-        faithforge_alignment=body.required_services,
-        relevance_classification="relevant",
-        relevance_score=85.0,
-        status="Packet Building",
-    )
-    db.add(opp)
-    db.commit()
-    db.refresh(opp)
-    opp_dict = {col.name: getattr(opp, col.name) for col in opp.__table__.columns}
-    discovery_text = f"=== Discovery Notes ===\n{body.discovery_notes}" if body.discovery_notes else ""
-    custom = []
-    if body.segment:
-        custom.append(f"Client segment: {body.segment}.")
-    if body.period_of_performance:
-        custom.append(f"Period of performance: {body.period_of_performance}.")
-    if body.custom_instructions:
-        custom.append(body.custom_instructions.strip())
-    custom_block = " ".join(custom)
-    try:
-        result = build_packet(opp_dict, [discovery_text] if discovery_text else [], custom_instructions=custom_block)
-    except Exception as e:
-        opp.status = "Under Review"
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Proposal generation failed: {str(e)}")
-    db.query(Packet).filter(Packet.opportunity_id == opp.id).delete()
-    packet = Packet(opportunity_id=opp.id, content_json=result["content_json"], html_content=result["html_content"])
-    db.add(packet)
-    opp.status = "Packet Ready"
-    opp.updated_at = datetime.utcnow()
-    db.commit()
-    log_action(db, "standalone_proposal_generated", opp.id,
-               json.dumps({"title": body.title, "client": body.client_name}))
-    return {"opportunity_id": opp.id, "message": "Proposal generated successfully"}
 
 
 # ─── Microsoft Graph Auth ────────────────────────────────────────────────────

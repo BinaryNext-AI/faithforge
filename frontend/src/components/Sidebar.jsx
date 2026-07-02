@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, FileSearch, Building2, Mail, PenTool, Settings, ClipboardList, Shield, LogOut
+  LayoutDashboard, FileSearch, Building2, Mail, Settings, ClipboardList, Shield, LogOut
 } from 'lucide-react'
 import { logout } from '../api'
 
@@ -9,7 +9,6 @@ const nav = [
   { to: '/opportunities', label: 'Opportunities', icon: FileSearch },
   { to: '/accounts', label: 'Accounts', icon: Building2 },
   { to: '/cold-email', label: 'Cold Email', icon: Mail },
-  { to: '/proposal-builder', label: 'Proposal Builder', icon: PenTool },
   { to: '/audit', label: 'Audit Log', icon: ClipboardList },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]

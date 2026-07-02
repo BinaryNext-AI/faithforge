@@ -58,8 +58,22 @@ function WorkflowStepper({ steps }) {
 
 // ─── Checklist ───────────────────────────────────────────────────────────────
 
+function normalizeChecklistText(text) {
+  const t = (text || '').trim()
+  // Self-heal a malformed AI response shaped like a Postgres/JSON array
+  // literal, e.g. {"Item one","Item two [ON FILE]"} — split it into lines.
+  if (/^\{.*\}$/s.test(t) && t.includes('","')) {
+    const inner = t.slice(1, -1)
+    const items = inner.match(/"(?:[^"\\]|\\.)*"/g) || []
+    if (items.length) {
+      return items.map(s => s.slice(1, -1).replace(/\\"/g, '"')).join('\n')
+    }
+  }
+  return t
+}
+
 function parseChecklistItems(text) {
-  return (text || '').split('\n')
+  return normalizeChecklistText(text).split('\n')
     .map(l => l.replace(/^\d+\.\s*/, '').replace(/^[-*•]\s*/, '').replace(/^- \[[ x]\]\s*/i, '').trim())
     .filter(l => l.length > 2)
     .map(l => {

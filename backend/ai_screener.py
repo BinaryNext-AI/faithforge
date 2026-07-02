@@ -133,7 +133,7 @@ Provide a comprehensive review as a JSON object:
   "eligibility_requirements": "<who is eligible to respond — business size, type, certifications, location, etc.>",
   "required_qualifications": "<technical qualifications and past performance required>",
   "required_forms": "<list of all required forms to include in submission>",
-  "submission_checklist": "<complete checklist of everything that must be submitted>",
+  "submission_checklist": "<one required item per line, each line starting with '- '. Plain text only — use real newline characters between items. Do NOT format this as a JSON array, a Postgres-style array literal, or a comma-separated list wrapped in braces/quotes. Example of the required format: '- Proposal cover sheet\\n- Signed W-9\\n- Certificate of insurance'>",
   "proposal_format": "<page limits, formatting requirements, section structure>",
   "evaluation_criteria": "<how proposals will be evaluated and weighted>",
   "insurance_requirements": "<required insurance types, coverage amounts, and certificates>",

@@ -16,56 +16,17 @@ if not logger.handlers:
 
 MODEL = "gpt-4o-mini"
 
-PACKET_SYSTEM = """You are a professional proposal writer for FaithForge Technologies & Consulting LLC — an independent, vendor-neutral program management and consulting firm based in the Maryland/DC area.
+PACKET_FRAME = """You are a professional proposal writer for FaithForge Technologies & Consulting LLC — a minority-owned program management and consulting firm based in Elkridge, Maryland (Maryland/DC region).
 
-## Company Identity
-FaithForge partners with organizations seeking disciplined execution, ethical leadership, and sustainable transformation — bringing strategic clarity to complex challenges. FaithForge is positioned for leaders under pressure, not casual operators. The firm bridges the Execution Accountability Gap by re-engineering institutional governance and aligning cross-functional teams with decision-grade data.
-
-## Core Services
-PMO Setup & Optimization | Strategic Project & Program Management | Business Analysis & Process Improvement | Digital Transformation Consulting | Governance Frameworks, Templates & Playbooks | Staff Augmentation (Project Managers, BAs, Project Leads) | Grants Management | Technical Writing | AI-Enabled Reporting | Organizational Readiness & Change Management (ADKAR-certified) | DEI Consulting | Capacity Building
-
-## 4-Tier Engagement Model
-- Tier 1: Immediate Advisory Support (On-Demand / No Retainer) — targeted diagnostics, audits, KPI or workflow reviews
-- Tier 2: Project Recovery & Operational Remediation (Fixed-Scope) — stalled/failing initiative recovery, governance reset
-- Tier 3: Governance & PMO Retainer (Ongoing Partnership) — fractional PMO oversight, executive reporting cadence
-- Tier 4: Enterprise Excellence / Managed PMO (Embedded Execution) — fully embedded PMO leadership, enterprise portfolio governance
-
-## Target Markets
-Healthcare & Health Systems | Government & Public Sector | Educational & Institutional Organizations | Enterprise & Mid-Market (500–5,000 employees). Primary geography: Maryland/DC/federal; national remote scope where applicable.
-
-## Proven Results (cite these in proposals)
-- 22% risk reduction in enterprise implementations
-- 16% improvement in delivery predictability; 95% on-time and within-budget completion rate
-- 20–30% efficiency gains through business analysis and process optimization
-
-## Reference Clients (use when demonstrating track record)
-- iHerb: PMO Foundation engagement — established clear roadmap and cross-department alignment; 16% delivery predictability improvement
-- Inteleos: End-to-end workflows and risk mitigation — streamlined vendor management and compliance processes
-- Amtrak: Strategic change management across departments — 22% risk reduction, improved compliance protocols
-
-## Primary Contact & Founder
-Bernedette Atong, MSc, PMP, PgMP — Founder & Chief Executive Officer
-Phone: 410-862-2975 | Email: info@faithforgetech.com | Website: www.faithforgetech.com
-Credentials: MSc Information Technology, BBA, BSc Economics; PMP, PgMP, PSM (Professional Scrum Master), Lean Six Sigma, AI Prompting
-Experience: 8+ years; led cross-functional teams of 14+; managed $12M+ program portfolios; domains include Transportation & Digital Technology, E-Commerce & Global Data, Food Produce & Procurement, Construction & Engineering
-
-## Standard Labor Rates
-- Executive Program Director (PMP, PgMP): $225/hr
-- Domain/Industry Strategic Consultant: $250/hr
-- Senior Program Manager: $185/hr
-- ADKAR Certified Change Management Director: $185/hr
-- PMO Manager: $135/hr
-- Stakeholder Engagement Lead: $125/hr
-- Risk & Performance Manager: $135/hr
-- Governance Analyst: $105/hr
-- Data & Reporting Analyst: $105/hr
-- Project Coordinator: $75/hr
+{knowledge_base}
 
 ## Tone & Voice
-Executive, professional, no contractions. FaithForge is always the "independent, vendor-neutral" partner protecting the CLIENT's interests — never a vendor, always an advisor. Every engagement is "a structured accountability installation that transforms strategy into disciplined execution."
+Executive, professional, no contractions. FaithForge is a governance and execution partner, not a traditional consulting vendor — an advisor that helps leaders deliver, not one that advises from the sidelines. Use only the facts, metrics, and key phrases provided in the knowledge base above — do not invent statistics, credentials, or claims. Lean on the target-market pain points and buying triggers to tailor language to this specific client's sector."""
 
-## Key Phrases (use naturally throughout)
-"independent, vendor-neutral" | "protect [client]'s interests" | "governance-first" | "disciplined program execution" | "executive visibility" | "benefits realization" | "AI-enabled program controls" | "ADKAR-certified change management" | "Execution Accountability Gap" | "decision-grade data" | "governance without bureaucracy" | "fix root causes, not symptoms" | "built for leaders under pressure" | "structured accountability" | "transforming vision into disciplined execution\""""
+
+def build_packet_system() -> str:
+    from knowledge import load_kb
+    return PACKET_FRAME.format(knowledge_base=load_kb())
 
 # ── Stage 1: Planner — builds the consistent skeleton (structure + budget math) ──
 PLAN_PROMPT = """You are planning a FaithForge proposal. Analyze the opportunity and solicitation, then design a complete, internally-consistent proposal plan.
@@ -108,7 +69,7 @@ Return ONLY a valid JSON object (no prose) with this schema:
 Requirements:
 - Include 5-7 workstreams/phases covering mobilization/governance, planning/readiness, oversight/execution, organizational readiness/change, customer/stakeholder engagement, go-live/benefits realization (adapt names to the domain).
 - Include 8-12 deliverable_products.
-- "labor" MUST include these 10 roles with these rates: Executive Program Director $225, Domain Strategic Consultant $250, Senior Program Manager $185, ADKAR Certified Change Management Director $185, PMO Manager $135, Stakeholder Engagement Lead $125, Risk & Performance Manager $135, Governance Analyst $105, Data & Reporting Analyst $105, Project Coordinator $75. Choose realistic hours scaled to this opportunity.
+- "labor" MUST use FaithForge's real standard role rates: Program Director $220/hr, Principal Consultant $200/hr, Senior Consultant $185/hr, Project Manager $150/hr, Solution/Technical Architect $150/hr, Solution Developer $145/hr, OCM Specialist $100/hr, Business Analyst $98/hr, PMO Coordinator $95/hr, Administrative Support $65/hr. Select the subset of roles appropriate to this opportunity and choose realistic hours scaled to its size. Do not invent rates.
 - 4-5 supporting_costs (PMO Tools & Reporting Platform, Executive Workshops & Governance Facilitation, Travel & Onsite Support, Administrative & Quality Assurance Support).
 - 4-5 optional_services.
 
@@ -134,7 +95,7 @@ Output EXACTLY this markdown structure:
 | Field | Response |
 |-------|----------|
 | Submitted by | FaithForge Technologies & Consulting LLC |
-| Primary Contact | Bernedette Atong, PMP, PgMP — Founder & Chief Executive Officer |
+| Primary Contact | Bernedette Atong, PMP, PgMP — Founder & Principal Consultant |
 | Phone | 410-862-2975 |
 | Email / Website | info@faithforgetech.com \\| www.faithforgetech.com |
 | Proposal Type | {{proposal_type}} |
@@ -181,7 +142,7 @@ Output this structure (each subsection must be 2-3 substantial paragraphs of spe
 
 ## SECTION 1: EXECUTIVE SUMMARY
 
-[Opening: 2-3 paragraphs — what the opportunity is, why FaithForge is the right independent/vendor-neutral partner, and how FaithForge frames its role protecting the client's interests. Distinguish FaithForge's governance/oversight role from any implementation vendor.]
+[Opening: 2-3 paragraphs — what the opportunity is, why FaithForge is the right governance and execution partner, and how FaithForge frames its role helping the client deliver. Distinguish FaithForge's governance/oversight role from any implementation vendor.]
 
 ### 1.2 Understanding {client_hint}'s Vision
 [2 paragraphs showing deep comprehension of the client's goals, challenges, and what success looks like.]
@@ -193,7 +154,7 @@ Output this structure (each subsection must be 2-3 substantial paragraphs of spe
 [A specific closing pledge paragraph for this engagement.]
 
 ### 1.5 FaithForge Advisory Team
-[3-4 paragraphs describing the team: Bernedette Atong as Executive Program Director; the named domain consultant from the plan (use their real name, title, and 20+ years experience); an ADKAR-certified Change Management Strategist. Explain what each brings.]
+[3-4 paragraphs describing the team: Bernedette Atong as Principal Consultant (PMP, PgMP); the named domain consultant from the plan (use their title and relevant senior experience without inventing a specific number of years); and an Organizational Change Management (OCM) specialist. Explain what each brings.]
 
 Output only the markdown. No contractions. Executive tone."""
 
@@ -246,41 +207,37 @@ Output this structure:
 ## SECTION 3: GENERAL BACKGROUND OF APPLICANT VENDOR
 
 ### 3.1 {domain_hint} & Program Governance Experience
-[2-3 paragraphs. Open with FaithForge's identity: an independent, vendor-neutral execution partner that bridges the Execution Accountability Gap by re-engineering institutional governance and aligning cross-functional teams with decision-grade data. Reference the 4-Tier engagement model. Then a bullet list of 5-6 relevant experience areas specific to this domain.]
+[2-3 paragraphs. Open with FaithForge's identity: a governance and execution partner that installs structure, governance, and execution discipline where complexity and accountability intersect. Reference the 4-Tier engagement model. Then a bullet list of 5-6 relevant experience areas specific to this domain.]
 
 ### 3.2 Demonstrated Track Record
-[2 paragraphs referencing FaithForge's proven results. Include specific outcome data where relevant:
-- iHerb: PMO Foundation — established roadmap and cross-department alignment; 16% delivery predictability improvement
-- Inteleos: End-to-end workflows, vendor management and compliance streamlining
-- Amtrak: Strategic change management across departments; 22% risk reduction, improved compliance protocols
-Tie these back to the specific opportunity's needs. Full references available upon request.]
+[2 paragraphs referencing FaithForge's proven results. Use ONLY the real engagements and metrics from the Case Studies section of the knowledge base (Amtrak, Inteleos, ASM Global, iHerb) — cite their actual figures; do not invent statistics. Tie the most relevant engagement(s) back to this specific opportunity's needs. Full references available upon request.]
 
 ### 3.3 Experience with Governance, PMO, and {domain_hint} Programs
-[Intro sentence + 6-7 capability bullets. Include: PMO maturity audits; governance framework design; multi-stakeholder coordination; regulatory compliance; executive reporting; AI-enabled program controls; ADKAR change management. Adapt to domain.]
+[Intro sentence + 6-7 capability bullets. Draw from FaithForge's documented capabilities: PMO maturity audits; governance framework design; multi-stakeholder coordination; regulatory compliance and audit readiness; executive reporting and KPI dashboards; workflow automation; organizational change management (OCM). Adapt to domain.]
 
 ### 3.4 Knowledge of Organizational Change, Customer/Stakeholder Adoption, and Readiness
-[2 paragraphs emphasizing ADKAR-certified change management. Reference FaithForge's workflow: Assess and Clarify → Develop Governance Framework → Establish Structured Execution Plan → Implement and Monitor → Review, Refine, and Sustain.]
+[2 paragraphs emphasizing organizational change management and stakeholder adoption. Reference FaithForge's documented execution model: assess execution risk → install governance and structure → enable teams with clarity and tools → transfer ownership and capability.]
 
 ### 3.5 Experience with Program Controls, Data Assessment, and Executive Reporting
-[Intro line + 6-7 bullets including AI-enabled reporting, KPI integrity reviews, executive dashboard cadence, decision-grade data, risk registers, performance baselines.]
+[Intro line + 6-7 bullets including KPI reporting and dashboards, data quality and reporting integrity, executive dashboard cadence, RAID/risk registers, performance baselines, weekly status reporting.]
 
 ### 3.6 Key Personnel and Team Structure
 | Key Role | Responsibilities |
 |----------|-----------------|
-[one row per role in the plan's "labor" list. The Executive Program Director row must read "Executive Program Director — Bernedette Atong, MSc, PMP, PgMP". The Domain Strategic Consultant row must use the named_consultant's name. Each responsibility = 1-2 sentences specific to this engagement.]
+[one row per role in the plan's "labor" list. The lead row must read "Principal Consultant — Bernedette Atong, MSc, PMP, PgMP". The Senior Consultant row must use the named_consultant's name. Each responsibility = 1-2 sentences specific to this engagement.]
 
 **FaithForge Proposed Team Governance Model**
 
 | Governance Layer | Purpose |
 |-----------------|---------|
 | {client_hint} Executive Sponsors | Provide strategic direction, decision authority, and executive oversight. |
-| FaithForge Executive Program Director | Primary executive advisor and Independent PMO lead — Bernedette Atong, MSc, PMP, PgMP. |
+| FaithForge Principal Consultant | Primary executive advisor and PMO lead — Bernedette Atong, MSc, PMP, PgMP. |
 [3-4 more layers]
 
-### 3.7 Founder & Executive Program Director Profile
+### 3.7 Founder & Principal Consultant Profile
 
 **Bernedette Atong, MSc, PMP, PgMP**
-*Founder & Chief Executive Officer — FaithForge Technologies & Consulting LLC*
+*Founder & Principal Consultant — FaithForge Technologies & Consulting LLC*
 **Years of Experience: 8+**
 **Education:** MSc Information Technology | BBA | BSc Economics
 **Certifications:** Project Management Professional (PMP) | Program Management Professional (PgMP) | Professional Scrum Master (PSM) | Lean Six Sigma | AI Prompting
@@ -291,7 +248,7 @@ Tie these back to the specific opportunity's needs. Full references available up
 - Construction & Engineering: Strategic oversight of multidisciplinary infrastructure projects yielding $600k+ earnings; 40% savings on project costs
 - Government & Healthcare: Compliance-focused governance across HIPAA, SOC2, and public-sector regulatory frameworks
 **Relevant Experience:**
-[2-paragraph narrative tying Bernedette's background directly to this engagement's domain and the client's specific challenges. End with her commitment to serve as Executive Program Director for this engagement.]
+[2-paragraph narrative tying Bernedette's background directly to this engagement's domain and the client's specific challenges. End with her commitment to serve as Principal Consultant and engagement lead for this engagement.]
 
 ### 3.8 {domain_hint} Consultant Profile
 [Use the named_consultant from the plan. Format:]
@@ -426,6 +383,7 @@ def _compliance_context(opp: Dict[str, Any]) -> str:
         ("Submission Method", "submission_method"), ("Summary", "opportunity_summary"),
         ("Eligibility", "eligibility_requirements"), ("Required Qualifications", "required_qualifications"),
         ("Required Forms", "required_forms"), ("Submission Checklist", "submission_checklist"),
+        ("Evaluation Criteria", "evaluation_criteria"),
         ("Certifications", "certifications_required"), ("Insurance", "insurance_requirements"),
         ("Compliance", "compliance_requirements"), ("Pricing", "pricing_requirements"),
         ("Required Attachments", "required_attachments"), ("Disqualifiers", "disqualifying_requirements"),
@@ -502,6 +460,7 @@ def build_packet(
     """
     from ai_screener import doc_char_budget
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    packet_system = build_packet_system()
     opp_context = format_opportunity_context(opportunity)
     compliance = _compliance_context(opportunity)
     doc_content = "\n\n---\n\n".join(document_texts) if document_texts else "No documents uploaded."
@@ -521,10 +480,10 @@ def build_packet(
     logger.info("[packet] stage 1/6: planner")
     plan_tokens = 5000
     plan_overhead = PLAN_PROMPT.format(opportunity_data=opp_context, document_content="", custom_block=custom_block)
-    max_doc_chars = doc_char_budget(PACKET_SYSTEM, plan_overhead, plan_tokens)
+    max_doc_chars = doc_char_budget(packet_system, plan_overhead, plan_tokens)
     plan_doc = doc_content[:max_doc_chars]
     plan_raw = _openai_chat(
-        client, PACKET_SYSTEM,
+        client, packet_system,
         PLAN_PROMPT.format(opportunity_data=opp_context, document_content=plan_doc, custom_block=custom_block),
         max_tokens=plan_tokens, json_mode=True, label="plan",
     )
@@ -565,7 +524,7 @@ def build_packet(
     parts = []
     for i, (label, prompt_tmpl, max_tokens) in enumerate(SECTION_LABELS, start=2):
         logger.info("[packet] stage %d/6: %s", i, label)
-        result = _openai_chat(client, PACKET_SYSTEM, _safe_format(prompt_tmpl, fmt),
+        result = _openai_chat(client, packet_system, _safe_format(prompt_tmpl, fmt),
                             max_tokens=max_tokens, label=label)
         if not result or not result.strip():
             logger.warning("[packet] %s returned empty content — section will be omitted", label)
@@ -585,6 +544,195 @@ def build_packet(
     return {
         "content_json": json.dumps({"markdown": full_text, "plan": plan}),
         "html_content": html_content,
+    }
+
+
+REVISE_PROMPT = """## OPPORTUNITY CONTEXT
+{opportunity_context}
+
+Here is the current FaithForge proposal, in markdown:
+
+## CURRENT PROPOSAL
+{current_markdown}
+
+## REQUESTED CHANGE
+{instruction}
+
+Apply this change and return the COMPLETE revised proposal in the exact same markdown structure (same headings, section numbering, and formatting conventions as the current proposal — headings with #/##/###, pipe tables for budget/labor, bullet lists). Do not drop any section that isn't affected by the requested change; only change what the instruction asks for. Use ONLY facts, figures, and phrasing available in the knowledge base above — do not invent statistics, credentials, rates, or claims not already present in the current proposal or the knowledge base. If the instruction asks for something the knowledge base cannot support (e.g. a rate or stat that doesn't exist), make the best faithful adjustment using only real data and note the limitation inline where relevant.
+
+Output only the markdown. No contractions."""
+
+
+def revise_packet(
+    opportunity: Dict[str, Any],
+    current_markdown: str,
+    instruction: str,
+) -> Dict[str, Any]:
+    """Apply a single conversational revision instruction to an existing packet.
+
+    Returns the same {content_json, html_content} shape as build_packet so the
+    caller can store it as a new Packet row (natural versioning).
+    """
+    from ai_screener import doc_char_budget
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    packet_system = build_packet_system()
+    opp_context = format_opportunity_context(opportunity)
+
+    max_tokens = 6000
+    overhead = REVISE_PROMPT.format(opportunity_context=opp_context, current_markdown="", instruction=instruction)
+    max_md_chars = doc_char_budget(packet_system, overhead, max_tokens)
+    md_for_prompt = current_markdown[:max_md_chars]
+
+    logger.info("[packet] revise — instruction=%r markdown_chars=%d", instruction[:120], len(current_markdown))
+    revised = _openai_chat(
+        client, packet_system,
+        REVISE_PROMPT.format(opportunity_context=opp_context, current_markdown=md_for_prompt, instruction=instruction),
+        max_tokens=max_tokens, label="revise",
+    )
+    revised = revised.strip()
+    if not revised:
+        raise RuntimeError("Revision produced no content. Please try again.")
+
+    html_content = markdown_to_html(revised)
+    return {
+        "content_json": json.dumps({"markdown": revised, "revision_instruction": instruction}),
+        "html_content": html_content,
+    }
+
+
+ANALYZE_DRAFT_PROMPT = """You are analyzing an existing draft proposal against the opportunity's requirements, on behalf of FaithForge.
+
+## OPPORTUNITY CONTEXT
+{opportunity_context}
+
+## COMPLIANCE & SUBMISSION REQUIREMENTS
+{compliance}
+
+## RFP / SOLICITATION EXCERPTS
+{rfp_content}
+
+## EXISTING DRAFT PROPOSAL
+{draft_text}
+
+Compare the draft against the requirements above and FaithForge's knowledge base (provided in the system prompt). Return ONLY a valid JSON object (no prose) with this schema:
+{{
+  "strengths": ["specific things the draft already does well"],
+  "gaps": ["specific requirements or claims the draft does not address or supports weakly"],
+  "missing_sections": ["standard proposal sections absent from the draft, e.g. Budget, Team Background, Risk Management"],
+  "compliance_risks": ["specific compliance/submission requirements the draft may fail to meet"],
+  "recommendations": ["concrete, specific fixes — reference exact FaithForge facts (rates, credentials, case studies) that should be used to fill each gap"]
+}}
+
+Be specific — cite exact requirements not addressed, and note anywhere the draft's numbers or claims are unsupported or should be replaced with FaithForge's real knowledge-base facts."""
+
+COMPLETE_DRAFT_PROMPT = """Here is an opportunity's context, RFP content, and an existing DRAFT proposal (possibly partial or unpolished). Rewrite and complete this draft into a submission-ready FaithForge proposal.
+
+## OPPORTUNITY CONTEXT
+{opportunity_context}
+
+## COMPLIANCE & SUBMISSION REQUIREMENTS
+{compliance}
+
+## RFP / SOLICITATION EXCERPTS
+{rfp_content}
+
+## EXISTING DRAFT PROPOSAL
+{draft_text}
+
+## GAP ANALYSIS (address every item below)
+{analysis_json}
+{custom_block}
+
+Preserve everything in the draft that is already strong and submission-ready — do not discard good existing content. Fill every gap and missing section identified above using ONLY facts, figures, and phrasing available in FaithForge's knowledge base (rates, credentials, case studies, service tiers, boilerplate) — never invent statistics, credentials, or client results that are not in the knowledge base. Produce a complete, well-structured proposal in markdown: headings (#/##/###), pipe tables for budget/labor breakdowns, and bullet lists — consistent with FaithForge's standard proposal structure (title, executive summary, scope of work, team/background, budget).
+
+Output only the markdown. No contractions."""
+
+
+def complete_draft_packet(
+    opportunity: Dict[str, Any],
+    rfp_texts: list[str],
+    draft_text: str,
+    custom_instructions: str = "",
+) -> Dict[str, Any]:
+    """Analyze an existing draft proposal against the RFP + knowledge base, then
+    complete/polish it into a submission-ready proposal.
+
+    Two-stage: (1) JSON gap analysis, (2) completion pass that fills gaps using
+    only knowledge-base facts. Returns the same {content_json, html_content}
+    shape as build_packet, plus an "analysis" dict for the UI.
+    """
+    from ai_screener import doc_char_budget
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    packet_system = build_packet_system()
+    opp_context = format_opportunity_context(opportunity)
+    compliance = _compliance_context(opportunity)
+    rfp_content = "\n\n---\n\n".join(rfp_texts) if rfp_texts else "No additional RFP documents uploaded."
+
+    custom_block = ""
+    if custom_instructions and custom_instructions.strip():
+        custom_block = (
+            f"\n\n## ADDITIONAL INSTRUCTIONS FROM USER\n{custom_instructions.strip()}"
+            "\n\nFollow these instructions carefully throughout."
+        )
+
+    def _split_budget(overhead: str, max_tokens: int) -> tuple[str, str]:
+        """Fit draft_text + rfp_content into the remaining char budget, giving
+        the draft priority since it's the primary input being completed."""
+        max_chars = doc_char_budget(packet_system, overhead, max_tokens)
+        draft_budget = min(len(draft_text), max_chars * 2 // 3) or max_chars
+        rfp_budget = max(max_chars - draft_budget, 0)
+        return draft_text[:draft_budget], rfp_content[:rfp_budget]
+
+    # ── Stage 1: Analysis ──
+    analysis_tokens = 2000
+    analysis_overhead = ANALYZE_DRAFT_PROMPT.format(
+        opportunity_context=opp_context, compliance=compliance, rfp_content="", draft_text="",
+    )
+    draft_for_analysis, rfp_for_analysis = _split_budget(analysis_overhead, analysis_tokens)
+
+    logger.info("[packet] complete-draft stage 1/2: analysis — draft_chars=%d rfp_chars=%d",
+                len(draft_text), len(rfp_content))
+    analysis_raw = _openai_chat(
+        client, packet_system,
+        ANALYZE_DRAFT_PROMPT.format(
+            opportunity_context=opp_context, compliance=compliance,
+            rfp_content=rfp_for_analysis, draft_text=draft_for_analysis,
+        ),
+        max_tokens=analysis_tokens, json_mode=True, label="complete-draft-analysis",
+    )
+    analysis = _extract_json(analysis_raw) or {
+        "strengths": [], "gaps": [], "missing_sections": [],
+        "compliance_risks": [], "recommendations": [],
+    }
+
+    # ── Stage 2: Completion ──
+    completion_tokens = 6000
+    analysis_json = json.dumps(analysis, indent=1)
+    completion_overhead = COMPLETE_DRAFT_PROMPT.format(
+        opportunity_context=opp_context, compliance=compliance, rfp_content="",
+        draft_text="", analysis_json=analysis_json, custom_block=custom_block,
+    )
+    draft_for_completion, rfp_for_completion = _split_budget(completion_overhead, completion_tokens)
+
+    logger.info("[packet] complete-draft stage 2/2: completion")
+    completed = _openai_chat(
+        client, packet_system,
+        COMPLETE_DRAFT_PROMPT.format(
+            opportunity_context=opp_context, compliance=compliance,
+            rfp_content=rfp_for_completion, draft_text=draft_for_completion,
+            analysis_json=analysis_json, custom_block=custom_block,
+        ),
+        max_tokens=completion_tokens, label="complete-draft-completion",
+    )
+    completed = completed.strip()
+    if not completed:
+        raise RuntimeError("Draft completion produced no content. Please try again.")
+
+    html_content = markdown_to_html(completed)
+    return {
+        "content_json": json.dumps({"markdown": completed, "analysis": analysis}),
+        "html_content": html_content,
+        "analysis": analysis,
     }
 
 

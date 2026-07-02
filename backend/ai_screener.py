@@ -3,12 +3,21 @@ import re
 from typing import Dict, Any
 from openai import OpenAI
 from config import settings
+from knowledge import load_standing_documents
 
 MODEL = "gpt-4o-mini"
 
+STANDING_DOCS_PREAMBLE = """FaithForge already keeps the following documents on file and can attach them to any submission without gathering them anew:
+
+{standing_documents}
+
+When producing "submission_checklist" below, append the marker " [ON FILE]" to the end of any checklist line whose required item matches one of these standing documents (match by meaning, not exact wording — e.g. "signed W-9" matches "W-9"). Leave unmarked only items that must be newly created, signed, or specifically tailored for this solicitation.
+
+"""
+
 SYSTEM_PROMPT = """You are an AI assistant for FaithForge Technologies & Consulting LLC, based in the Maryland/DC area.
 
-FaithForge is an independent, vendor-neutral program management and consulting firm — positioned for leaders under pressure, not casual operators. The firm bridges the Execution Accountability Gap by re-engineering institutional governance and aligning cross-functional teams with decision-grade data.
+FaithForge is a minority-owned program management and consulting firm — a governance and execution partner built for leaders under pressure. The firm installs structure, governance, and execution discipline where complexity and accountability intersect, helping leaders deliver rather than advising from the sidelines.
 
 FaithForge does NOT deliver trade/vocational skills instruction, construction, IT infrastructure, or direct clinical services. FaithForge consults ON programs — it does not execute them.
 
@@ -24,9 +33,9 @@ FaithForge does NOT deliver trade/vocational skills instruction, construction, I
 - Workforce development or training PROGRAM MANAGEMENT (designing/managing a program, not delivering trade skills)
 - Grants management consulting, technical assistance, or capacity building for nonprofits/public sector
 - Curriculum design for professional development, certifications, or public-sector training programs
-- DEI consulting, organizational readiness, or change management engagements
+- Organizational readiness or change management engagements
 - Healthcare & health systems needing compliance governance, PMO, or process improvement
-- Enterprise or mid-market organizations (500-5,000 employees) needing structured execution support
+- Enterprise or mid-market organizations needing structured execution support
 
 ## WEAK matches (score 40-69 — still worth seeing, but lower priority):
 - Vocational or trade skill instruction (cosmetology, barbering, CDL, construction trades, etc.) unless the client is a government agency seeking program management consulting, not instructors
@@ -276,7 +285,7 @@ def score_account(
     return result
 
 
-COLD_EMAIL_SYSTEM = """You are Bernedette Atong, Principal of FaithForge Technologies & Consulting LLC — a vendor-neutral program management firm in the Maryland/DC area. You write sharp, executive-level cold outreach: no fluff, no boilerplate, no vague "let's connect" asks. Every email names a specific pain, makes a single low-friction ask, and sounds like a busy principal wrote it in 10 minutes — not a marketing team."""
+COLD_EMAIL_SYSTEM = """You are Bernedette Atong, Principal of FaithForge Technologies & Consulting LLC — a program management and consulting firm in the Maryland/DC area. You write sharp, executive-level cold outreach: no fluff, no boilerplate, no vague "let's connect" asks. Every email names a specific pain, makes a single low-friction ask, and sounds like a busy principal wrote it in 10 minutes — not a marketing team."""
 
 COLD_EMAIL_PROMPT = """Write a {sequence_length}-email cold outreach sequence for this prospect.
 
@@ -288,9 +297,9 @@ Known pain points: {pain_points}
 Planned entry offer: {entry_offer}
 
 FAITHFORGE CONTEXT (weave in naturally, don't list):
-- Vendor-neutral PMO, governance, and program oversight firm
-- Bridges the "Execution Accountability Gap" — stalled initiatives, misaligned teams, no decision-grade data
-- Bernedette's credentials: MSc, PMP, PgMP, PSM I, Lean Six Sigma — 8+ years across health systems, federal programs, workforce development
+- PMO, governance, and program oversight firm; a governance and execution partner, not a traditional consulting vendor
+- Helps leaders fix the real problems behind stalled initiatives: unclear accountability, fading visibility after kickoff, misaligned teams
+- Bernedette's credentials: MSc, PMP, PgMP, PSM, Lean Six Sigma — 8+ years across transportation, e-commerce/data, procurement, construction, government and healthcare programs
 - Tier-1 entry offers: PMO Diagnostic (2-week audit), KPI & Reporting Health Check, Governance Readiness Assessment, Change Readiness Workshop
 
 RULES FOR EACH EMAIL:
@@ -344,7 +353,7 @@ def generate_cold_email(
 
 GONOGO_PROMPT = """Perform a formal Bid / No-Bid assessment for FaithForge Technologies & Consulting LLC on this solicitation.
 
-FaithForge offers: independent vendor-neutral PMO, governance, program oversight, change management (ADKAR-certified), grants management, capacity building, and organizational readiness. Principal Bernedette Atong holds PMP and PgMP certifications, 8+ years experience. Primary geography: Maryland/DC/federal; remote national scope also considered.
+FaithForge offers: PMO leadership, governance, program oversight, enterprise transformation, workflow automation, business analytics, governance/risk/compliance, organizational change management, and staff augmentation. Principal Bernedette Atong holds PMP and PgMP certifications, 8+ years experience. Headquartered in Elkridge, MD (Maryland/DC region); registered for federal awards via SAM.gov.
 
 OPPORTUNITY DATA:
 {opportunity_data}
@@ -354,7 +363,7 @@ SCORING RUBRIC — compute each factor, then sum:
 - Eligibility & Compliance (0-25): can FaithForge meet certifications, registrations, eligibility? 20-25=all requirements met; 10-19=most met, minor gaps; 0-9=significant gaps or likely disqualifiers
 - Risk Level (0-20): score HIGH when risk is LOW: 16-20=manageable risks, no disqualifiers; 8-15=some risk, manageable; 0-7=tight timeline, disqualifying clauses, major red flags
 - Contract Value & Scope (0-15): 12-15=strong value and clear scope; 6-11=moderate or unclear; 0-5=too small, out of scope, or undefined
-- Competitive Position (0-15): 12-15=strong differentiators (vendor-neutral, PgMP, ADKAR); 6-11=competitive; 0-5=commoditized or high incumbent advantage
+- Competitive Position (0-15): 12-15=strong differentiators (PgMP-led governance, minority-owned, senior-led delivery); 6-11=competitive; 0-5=commoditized or high incumbent advantage
 
 Verdict rules: score ≥ 70 → BID | score 45-69 → BID WITH CONDITIONS | score ≤ 44 → NO-BID
 
@@ -396,11 +405,12 @@ def review_documents(
     documents_text: str,
 ) -> Dict[str, Any]:
     max_tokens = 4096
-    overhead = DOCUMENT_REVIEW_PROMPT.format(
+    preamble = STANDING_DOCS_PREAMBLE.format(standing_documents=load_standing_documents())
+    overhead = preamble + DOCUMENT_REVIEW_PROMPT.format(
         opportunity_context=opportunity_context, documents_text=""
     )
     max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
-    prompt = DOCUMENT_REVIEW_PROMPT.format(
+    prompt = preamble + DOCUMENT_REVIEW_PROMPT.format(
         opportunity_context=opportunity_context,
         documents_text=documents_text[:max_doc_chars],
     )

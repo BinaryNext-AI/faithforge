@@ -42,6 +42,7 @@ export const getDashboardStats = () => api.get('/dashboard/stats').then(r => r.d
 
 // Opportunities
 export const getOpportunities = (params = {}) => api.get('/opportunities', { params }).then(r => r.data)
+export const createOpportunity = (data) => api.post('/opportunities', data).then(r => r.data)
 export const getOpportunity = (id) => api.get(`/opportunities/${id}`).then(r => r.data)
 export const updateOpportunity = (id, data) => api.put(`/opportunities/${id}`, data).then(r => r.data)
 export const updateStatus = (id, status) => api.put(`/opportunities/${id}/status`, { status }).then(r => r.data)
@@ -68,6 +69,28 @@ export const buildPacket = (opportunityId, customInstructions = '') =>
   api.post(`/opportunities/${opportunityId}/packet`, { custom_instructions: customInstructions }, { timeout: 600000 }).then(r => r.data)
 export const getPacket = (opportunityId) => api.get(`/opportunities/${opportunityId}/packet`).then(r => r.data)
 export const emailPacket = (opportunityId) => api.post(`/opportunities/${opportunityId}/packet/email`).then(r => r.data)
+export const exportPacket = async (opportunityId, format = 'docx') => {
+  const res = await api.get(`/opportunities/${opportunityId}/packet/export`, {
+    params: { format },
+    responseType: 'blob',
+  })
+  const disposition = res.headers['content-disposition'] || ''
+  const match = disposition.match(/filename="?([^"]+)"?/)
+  const filename = match ? match[1] : `proposal.${format}`
+  const url = window.URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.URL.revokeObjectURL(url)
+}
+export const completeDraftProposal = (opportunityId, { document_id, draft_text, custom_instructions } = {}) =>
+  api.post(`/opportunities/${opportunityId}/proposal/complete-draft`,
+    { document_id, draft_text, custom_instructions }, { timeout: 600000 }).then(r => r.data)
+export const revisePacket = (opportunityId, instruction) =>
+  api.post(`/opportunities/${opportunityId}/packet/revise`, { instruction }, { timeout: 600000 }).then(r => r.data)
 
 // CRM Accounts
 export const getCrmStats = () => api.get('/crm/stats').then(r => r.data)

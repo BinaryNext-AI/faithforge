@@ -4,12 +4,13 @@ import {
   ArrowLeft, Loader2, AlertCircle, FileText, Trash2, Eye,
   Package, Mail, ExternalLink, CheckCircle,
   AlertTriangle, RefreshCw, ThumbsUp, ThumbsDown, HelpCircle,
-  ChevronDown, ChevronUp, Lock, ClipboardCheck, Send,
+  ChevronDown, ChevronUp, Lock, ClipboardCheck, Send, Download,
 } from 'lucide-react'
 import {
   getOpportunity, updateStatus, deleteOpportunity,
   uploadDocument, deleteDocument, reviewDocuments,
-  buildPacket, getPacket, emailPacket, scoreGoNoGo,
+  buildPacket, getPacket, emailPacket, scoreGoNoGo, exportPacket, revisePacket,
+  completeDraftProposal,
 } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import FileUpload from '../components/FileUpload'
@@ -61,19 +62,31 @@ function parseChecklistItems(text) {
   return (text || '').split('\n')
     .map(l => l.replace(/^\d+\.\s*/, '').replace(/^[-*•]\s*/, '').replace(/^- \[[ x]\]\s*/i, '').trim())
     .filter(l => l.length > 2)
+    .map(l => {
+      const onFile = /\[on file\]\s*$/i.test(l)
+      return { text: l.replace(/\s*\[on file\]\s*$/i, '').trim(), onFile }
+    })
 }
 
 function SubmissionChecklist({ text, opportunityId, onProgressChange }) {
   const storageKey = `ff_checklist_${opportunityId}`
   const items = parseChecklistItems(text)
   const [checked, setChecked] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(storageKey) || '{}') } catch { return {} }
+    let stored = {}
+    try { stored = JSON.parse(localStorage.getItem(storageKey) || '{}') } catch {}
+    const next = { ...stored }
+    let changed = false
+    items.forEach((item, i) => {
+      if (item.onFile && !(i in next)) { next[i] = true; changed = true }
+    })
+    if (changed) localStorage.setItem(storageKey, JSON.stringify(next))
+    return next
   })
   const [expanded, setExpanded] = useState(true)
 
   useEffect(() => {
     const done = items.filter((_, i) => checked[i]).length
-    const unchecked = items.filter((_, i) => !checked[i])
+    const unchecked = items.filter((_, i) => !checked[i]).map(item => item.text)
     onProgressChange?.(done, items.length, unchecked)
   }, [checked]) // eslint-disable-line
 
@@ -123,7 +136,10 @@ function SubmissionChecklist({ text, opportunityId, onProgressChange }) {
               }`}>
                 {checked[i] && <CheckCircle className="w-3 h-3 text-white" />}
               </div>
-              <span className={`flex-1 leading-snug ${checked[i] ? 'line-through text-gray-400' : 'text-gray-800'}`}>{item}</span>
+              <span className={`flex-1 leading-snug ${checked[i] ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                {item.text}
+                {item.onFile && <span className="ml-1.5 text-xs text-gray-400 no-underline">(on file)</span>}
+              </span>
               {checked[i] && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />}
             </li>
           ))}
@@ -237,6 +253,13 @@ export default function OpportunityDetail() {
   const [gonogoLoading, setGonogoLoading] = useState(false)
   const [checklistProgress, setChecklistProgress] = useState({ done: 0, total: 0, unchecked: [] })
   const [bypassChecklist, setBypassChecklist] = useState(false)
+  const [revisionInstruction, setRevisionInstruction] = useState('')
+  const [revising, setRevising] = useState(false)
+  const [lastRevision, setLastRevision] = useState(null)
+  const [draftMode, setDraftMode] = useState('document')
+  const [draftDocumentId, setDraftDocumentId] = useState('')
+  const [draftText, setDraftText] = useState('')
+  const [draftAnalysis, setDraftAnalysis] = useState(null)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -311,6 +334,44 @@ export default function OpportunityDetail() {
     try { const result = await emailPacket(id); showToast(`Packet emailed to ${result.to}`) }
     catch (e) { showToast(e.message, 'error') }
     finally { setActionLoading(null) }
+  }
+
+  const handleExportPacket = async (format) => {
+    setActionLoading(`export-${format}`)
+    try { await exportPacket(id, format); showToast(`Downloaded ${format.toUpperCase()}`) }
+    catch (e) { showToast(e.message, 'error') }
+    finally { setActionLoading(null) }
+  }
+
+  const handleCompleteDraft = async () => {
+    setActionLoading('complete-draft')
+    try {
+      const payload = draftMode === 'document'
+        ? { document_id: Number(draftDocumentId), custom_instructions: customInstructions }
+        : { draft_text: draftText, custom_instructions: customInstructions }
+      const result = await completeDraftProposal(id, payload)
+      setPacket(result.packet)
+      setDraftAnalysis(result.analysis)
+      const updated = await getOpportunity(id)
+      setOpp(updated)
+      setShowPacket(true)
+      showToast('Draft analyzed and completed!')
+    } catch (e) { showToast(e.message, 'error') }
+    finally { setActionLoading(null) }
+  }
+
+  const handleRevise = async (e) => {
+    e.preventDefault()
+    if (!revisionInstruction.trim()) return
+    setRevising(true)
+    try {
+      const p = await revisePacket(id, revisionInstruction.trim())
+      setPacket(p)
+      setLastRevision(revisionInstruction.trim())
+      setRevisionInstruction('')
+      showToast('Proposal revised')
+    } catch (e) { showToast(e.message, 'error') }
+    finally { setRevising(false) }
   }
 
   const buildEmailBernedetteLink = () => {
@@ -602,6 +663,12 @@ export default function OpportunityDetail() {
                 <button onClick={() => setShowPacket(s => !s)} className="btn-secondary text-xs">
                   <Eye className="w-3 h-3" />{showPacket ? 'Hide' : 'View'} Packet
                 </button>
+                <button onClick={() => handleExportPacket('docx')} disabled={actionLoading === 'export-docx'} className="btn-secondary text-xs">
+                  {actionLoading === 'export-docx' ? <><Loader2 className="w-3 h-3 animate-spin" />Exporting…</> : <><Download className="w-3 h-3" />Word</>}
+                </button>
+                <button onClick={() => handleExportPacket('pdf')} disabled={actionLoading === 'export-pdf'} className="btn-secondary text-xs">
+                  {actionLoading === 'export-pdf' ? <><Loader2 className="w-3 h-3 animate-spin" />Exporting…</> : <><Download className="w-3 h-3" />PDF</>}
+                </button>
                 <button onClick={handleEmailPacket} disabled={actionLoading === 'email'} className="btn-success text-xs">
                   {actionLoading === 'email' ? <><Loader2 className="w-3 h-3 animate-spin" />Sending…</> : <><Mail className="w-3 h-3" />Email Packet</>}
                 </button>
@@ -667,6 +734,91 @@ export default function OpportunityDetail() {
           </div>
         )}
 
+        {/* Complete an Existing Draft */}
+        {(!checklistBlocking || hasPacket) && (
+          <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-indigo-900">Have an existing draft? Complete it instead</p>
+              <p className="text-xs text-indigo-600 mt-0.5">AI compares your draft against the RFP and FaithForge's knowledge base, fills the gaps, and produces a submission-ready version.</p>
+            </div>
+
+            <div className="flex items-center gap-4 text-xs text-gray-700">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" checked={draftMode === 'document'} onChange={() => setDraftMode('document')} />
+                Pick an uploaded document
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" checked={draftMode === 'paste'} onChange={() => setDraftMode('paste')} />
+                Paste draft text
+              </label>
+            </div>
+
+            {draftMode === 'document' ? (
+              hasDocuments ? (
+                <select value={draftDocumentId} onChange={e => setDraftDocumentId(e.target.value)} className="input text-sm">
+                  <option value="">Select a document…</option>
+                  {opp.documents.map(d => <option key={d.id} value={d.id}>{d.original_filename}</option>)}
+                </select>
+              ) : (
+                <p className="text-xs text-gray-400">No documents uploaded yet — upload the draft in Step 1, or paste its text instead.</p>
+              )
+            ) : (
+              <textarea
+                value={draftText}
+                onChange={e => setDraftText(e.target.value)}
+                rows={4}
+                placeholder="Paste the existing draft proposal text here…"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 placeholder-gray-400"
+              />
+            )}
+
+            <button
+              onClick={handleCompleteDraft}
+              disabled={actionLoading === 'complete-draft' || (draftMode === 'document' ? !draftDocumentId : !draftText.trim())}
+              className="btn-primary text-xs px-4 py-2"
+            >
+              {actionLoading === 'complete-draft'
+                ? <><Loader2 className="w-3 h-3 animate-spin" />Analyzing & Completing…</>
+                : <><ClipboardCheck className="w-3 h-3" />Analyze & Complete Draft</>}
+            </button>
+
+            {draftAnalysis && (
+              <div className="mt-2 p-3 bg-white border border-indigo-100 rounded-lg space-y-2.5 text-xs">
+                {draftAnalysis.strengths?.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-emerald-700 mb-1">Strengths</p>
+                    <ul className="space-y-0.5">{draftAnalysis.strengths.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
+                {draftAnalysis.gaps?.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-amber-700 mb-1">Gaps Found & Filled</p>
+                    <ul className="space-y-0.5">{draftAnalysis.gaps.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
+                {draftAnalysis.missing_sections?.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-amber-700 mb-1">Missing Sections Added</p>
+                    <ul className="space-y-0.5">{draftAnalysis.missing_sections.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
+                {draftAnalysis.compliance_risks?.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-red-700 mb-1">Compliance Risks</p>
+                    <ul className="space-y-0.5">{draftAnalysis.compliance_risks.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
+                {draftAnalysis.recommendations?.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-blue-700 mb-1">Recommendations Applied</p>
+                    <ul className="space-y-0.5">{draftAnalysis.recommendations.map((s, i) => <li key={i} className="text-gray-700">• {s}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {!hasPacket && !actionLoading && !checklistBlocking && (
           <p className="text-sm text-gray-500">Generate a full proposal-ready packet — executive summary, scope of work, team background, and detailed budget.</p>
         )}
@@ -682,8 +834,33 @@ export default function OpportunityDetail() {
         )}
 
         {showPacket && packet?.html_content && (
-          <div className="mt-4 p-5 bg-white border border-gray-200 rounded-xl prose prose-sm max-w-none overflow-auto" style={{ maxHeight: '600px' }}
-            dangerouslySetInnerHTML={{ __html: packet.html_content }} />
+          <>
+            <div className="mt-4 p-5 bg-white border border-gray-200 rounded-xl prose prose-sm max-w-none overflow-auto" style={{ maxHeight: '600px' }}
+              dangerouslySetInnerHTML={{ __html: packet.html_content }} />
+
+            <form onSubmit={handleRevise} className="mt-3 p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+              <label className="block text-xs font-semibold text-gray-600">
+                Propose a change <span className="font-normal text-gray-400">(AI revises the full proposal and saves a new version)</span>
+              </label>
+              {lastRevision && (
+                <p className="text-xs text-gray-400 italic">Last applied: "{lastRevision}"</p>
+              )}
+              <div className="flex items-start gap-2">
+                <textarea
+                  value={revisionInstruction}
+                  onChange={e => setRevisionInstruction(e.target.value)}
+                  placeholder="e.g. Lower the total budget by 10%. Add a one-paragraph risk-management section. Make the tone less formal."
+                  rows={2}
+                  disabled={revising}
+                  className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 placeholder-gray-400 disabled:bg-gray-100"
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleRevise(e) } }}
+                />
+                <button type="submit" disabled={revising || !revisionInstruction.trim()} className="btn-primary text-xs px-4 py-2.5 shrink-0">
+                  {revising ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Revising…</> : <><Send className="w-3.5 h-3.5" />Apply</>}
+                </button>
+              </div>
+            </form>
+          </>
         )}
 
         {packet && (

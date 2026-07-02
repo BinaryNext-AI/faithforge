@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import secrets
@@ -9,7 +10,7 @@ from typing import List, Optional
 
 from fastapi import (
     FastAPI, Depends, HTTPException, UploadFile, File,
-    BackgroundTasks, Request, Query, Header
+    BackgroundTasks, Request, Query, Header, Response
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,9 +23,9 @@ from models import (
     Account, ACCOUNT_STAGES,
 )
 from schemas import (
-    OpportunityOut, OpportunityUpdate, StatusUpdate, DocumentOut,
+    OpportunityOut, OpportunityUpdate, OpportunityCreate, StatusUpdate, DocumentOut,
     PacketOut, AuditLogOut, DashboardStats, ScanResult, AppSettingOut,
-    PacketBuildRequest,
+    PacketBuildRequest, CompleteDraftRequest, CompleteDraftOut, RevisePacketRequest,
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
     ColdEmailRequest, ColdEmailOut,
     GoNoGoOut, ProposalGenerateRequest, ProposalGenerateOut,
@@ -207,6 +208,38 @@ def list_opportunities(
             | Opportunity.solicitation_number.ilike(term)
         )
     return q.order_by(desc(Opportunity.created_at)).offset(skip).limit(limit).all()
+
+
+@app.post("/api/opportunities", response_model=OpportunityOut)
+def create_opportunity(
+    body: OpportunityCreate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Manually add an opportunity that wasn't found via email scan (e.g. spotted
+    on a portal). It enters the same pipeline as an email-discovered opportunity:
+    upload documents (including anything pulled from EMMA) → AI Review → checklist
+    → build proposal."""
+    opp = Opportunity(
+        email_id=f"manual-{uuid.uuid4().hex}",
+        email_subject=body.opportunity_title,
+        email_from="Manual Entry",
+        opportunity_title=body.opportunity_title,
+        agency_name=body.agency_name,
+        solicitation_number=body.solicitation_number,
+        contract_type=body.contract_type,
+        estimated_value=body.estimated_value,
+        due_date=body.due_date,
+        emma_link=body.emma_link,
+        has_emma_link=bool(body.emma_link),
+        opportunity_summary=body.opportunity_summary,
+        status="New",
+    )
+    db.add(opp)
+    db.commit()
+    db.refresh(opp)
+    log_action(db, "opportunity_created_manually", opp.id, json.dumps({"title": body.opportunity_title}))
+    return opp
 
 
 @app.get("/api/opportunities/{opportunity_id}", response_model=OpportunityOut)
@@ -694,6 +727,78 @@ def build_packet_endpoint(
     return packet
 
 
+@app.post("/api/opportunities/{opportunity_id}/proposal/complete-draft", response_model=CompleteDraftOut)
+def complete_draft_endpoint(
+    opportunity_id: int,
+    body: CompleteDraftRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    from document_processor import process_document, truncate_for_ai
+    from packet_builder import complete_draft_packet
+
+    draft_text = (body.draft_text or "").strip()
+    draft_document_id = body.document_id
+
+    if not draft_text and draft_document_id is None:
+        raise HTTPException(status_code=400, detail="Provide either draft_text or document_id.")
+
+    if not draft_text and draft_document_id is not None:
+        draft_doc = next((d for d in opp.documents if d.id == draft_document_id), None)
+        if not draft_doc:
+            raise HTTPException(status_code=404, detail="Draft document not found on this opportunity.")
+        if not os.path.exists(draft_doc.file_path):
+            raise HTTPException(status_code=404, detail="Draft document file is missing on disk.")
+        draft_text = truncate_for_ai(process_document(draft_doc.file_path, UPLOAD_PATH, draft_doc.file_content), 40000)
+
+    if not draft_text:
+        raise HTTPException(status_code=400, detail="Draft is empty — nothing to analyze.")
+
+    # RFP context comes from every OTHER uploaded document (exclude the draft itself)
+    rfp_texts = []
+    for doc in opp.documents:
+        if doc.id == draft_document_id:
+            continue
+        if os.path.exists(doc.file_path):
+            text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+            rfp_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
+
+    opp.status = "Packet Building"
+    opp.updated_at = datetime.utcnow()
+    db.commit()
+    opp_dict = {col.name: getattr(opp, col.name) for col in opp.__table__.columns}
+    try:
+        result = complete_draft_packet(opp_dict, rfp_texts, draft_text, custom_instructions=body.custom_instructions or "")
+    except Exception as e:
+        opp.status = "Under Review"
+        db.commit()
+        msg = str(e)
+        logger.exception("Draft completion failed for opportunity %d (%s): %s",
+                         opportunity_id, opp.opportunity_title or opp.email_subject, msg)
+        if "rate_limit" in msg or "429" in msg or "tokens per minute" in msg or "RateLimitError" in msg:
+            msg = ("OpenAI rate limit reached. Wait ~1 minute and retry, "
+                   "or check your API key has an active balance at platform.openai.com/usage.")
+        raise HTTPException(status_code=500, detail=f"Draft completion failed: {msg}")
+
+    db.query(Packet).filter(Packet.opportunity_id == opportunity_id).delete()
+    packet = Packet(
+        opportunity_id=opportunity_id,
+        content_json=result["content_json"],
+        html_content=result["html_content"],
+    )
+    db.add(packet)
+    opp.status = "Packet Ready"
+    opp.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(packet)
+    log_action(db, "draft_completed", opportunity_id, json.dumps({"document_id": draft_document_id}))
+    return {"packet": packet, "analysis": result["analysis"]}
+
+
 @app.get("/api/opportunities/{opportunity_id}/packet", response_model=PacketOut)
 def get_packet(opportunity_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
     packet = db.query(Packet).filter(Packet.opportunity_id == opportunity_id).order_by(desc(Packet.created_at)).first()
@@ -730,6 +835,91 @@ def email_packet_endpoint(
     to_str = ", ".join(recipients)
     log_action(db, "packet_emailed", opportunity_id, json.dumps({"to": recipients}))
     return {"message": "Packet emailed successfully", "to": to_str}
+
+
+@app.get("/api/opportunities/{opportunity_id}/packet/export")
+def export_packet_endpoint(
+    opportunity_id: int,
+    format: str = Query("docx", pattern="^(docx|pdf)$"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    packet = db.query(Packet).filter(Packet.opportunity_id == opportunity_id).order_by(desc(Packet.created_at)).first()
+    if not packet:
+        raise HTTPException(status_code=404, detail="No packet found. Build the packet first.")
+    try:
+        content = json.loads(packet.content_json or "{}")
+    except Exception:
+        content = {}
+    markdown = content.get("markdown", "")
+    title = opp.opportunity_title or opp.email_subject or "FaithForge Proposal"
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", title).strip("-").lower()[:60] or "proposal"
+
+    from packet_export import markdown_to_docx_bytes, markdown_to_pdf_bytes
+    try:
+        if format == "docx":
+            data = markdown_to_docx_bytes(markdown, title)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            filename = f"{slug}-proposal.docx"
+        else:
+            data = markdown_to_pdf_bytes(markdown, title)
+            media_type = "application/pdf"
+            filename = f"{slug}-proposal.pdf"
+    except Exception as e:
+        logger.exception("Packet export failed for opportunity %d (%s): %s", opportunity_id, format, e)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+    log_action(db, "packet_exported", opportunity_id, json.dumps({"format": format}))
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/opportunities/{opportunity_id}/packet/revise", response_model=PacketOut)
+def revise_packet_endpoint(
+    opportunity_id: int,
+    body: RevisePacketRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    packet = db.query(Packet).filter(Packet.opportunity_id == opportunity_id).order_by(desc(Packet.created_at)).first()
+    if not packet:
+        raise HTTPException(status_code=404, detail="No packet found. Build the packet first.")
+    try:
+        current = json.loads(packet.content_json or "{}")
+    except Exception:
+        current = {}
+    current_markdown = current.get("markdown", "")
+    if not current_markdown:
+        raise HTTPException(status_code=400, detail="Current packet has no content to revise.")
+
+    from packet_builder import revise_packet
+    opp_dict = {col.name: getattr(opp, col.name) for col in opp.__table__.columns}
+    try:
+        result = revise_packet(opp_dict, current_markdown, body.instruction)
+    except Exception as e:
+        logger.exception("Packet revision failed for opportunity %d: %s", opportunity_id, e)
+        raise HTTPException(status_code=500, detail=f"Revision failed: {str(e)}")
+
+    new_packet = Packet(
+        opportunity_id=opportunity_id,
+        content_json=result["content_json"],
+        html_content=result["html_content"],
+    )
+    db.add(new_packet)
+    opp.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(new_packet)
+    log_action(db, "packet_revised", opportunity_id, json.dumps({"instruction": body.instruction}))
+    return new_packet
 
 
 # ─── Audit Log ────────────────────────────────────────────────────────────────

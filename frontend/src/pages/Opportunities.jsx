@@ -1,8 +1,105 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { Search, SlidersHorizontal, ChevronRight, Loader2, AlertCircle, Building2, Calendar, DollarSign, ExternalLink } from 'lucide-react'
-import { getOpportunities } from '../api'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Search, SlidersHorizontal, ChevronRight, Loader2, AlertCircle, Building2, Calendar, DollarSign, ExternalLink, Plus, X } from 'lucide-react'
+import { getOpportunities, createOpportunity } from '../api'
 import StatusBadge from '../components/StatusBadge'
+
+const NEW_OPP_DEFAULT = {
+  opportunity_title: '',
+  agency_name: '',
+  solicitation_number: '',
+  contract_type: '',
+  estimated_value: '',
+  due_date: '',
+  emma_link: '',
+  opportunity_summary: '',
+}
+
+function NewOpportunityModal({ onClose, onCreated }) {
+  const [form, setForm] = useState(NEW_OPP_DEFAULT)
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState(null)
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.opportunity_title.trim()) return
+    setCreating(true)
+    setError(null)
+    try {
+      const payload = { ...form, due_date: form.due_date ? new Date(form.due_date).toISOString() : null }
+      const created = await createOpportunity(payload)
+      onCreated(created)
+    } catch (err) {
+      setError(err.message)
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">New Opportunity</h2>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-3">
+          <p className="text-xs text-gray-400 -mt-1">
+            For opportunities found outside email (a portal, EMMA, a referral). This creates the record and takes you to its page — from there, upload the solicitation documents (including anything pulled from EMMA), run AI Review, and build the proposal exactly like any other opportunity.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Opportunity Title *</label>
+            <input value={form.opportunity_title} onChange={set('opportunity_title')} className="input" placeholder="e.g. Prince George's County PMO Retainer 2026" autoFocus />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Agency / Organization</label>
+              <input value={form.agency_name} onChange={set('agency_name')} className="input" placeholder="e.g. PG County DPIE" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Solicitation Number</label>
+              <input value={form.solicitation_number} onChange={set('solicitation_number')} className="input" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Contract Type</label>
+              <input value={form.contract_type} onChange={set('contract_type')} className="input" placeholder="e.g. Firm Fixed Price" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Estimated Value</label>
+              <input value={form.estimated_value} onChange={set('estimated_value')} className="input" placeholder="e.g. $150K–$250K/yr" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Due Date</label>
+              <input type="date" value={form.due_date} onChange={set('due_date')} className="input" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">EMMA Link</label>
+              <input value={form.emma_link} onChange={set('emma_link')} className="input" placeholder="https://emma.maryland.gov/…" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Summary / Notes</label>
+            <textarea value={form.opportunity_summary} onChange={set('opportunity_summary')} className="input min-h-20" rows={3}
+              placeholder="What you know so far — scope, contacts, how you found it." />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary text-sm px-4 py-2">Cancel</button>
+            <button type="submit" disabled={creating || !form.opportunity_title.trim()} className="btn-primary text-sm px-4 py-2 flex items-center gap-1.5">
+              {creating ? <><Loader2 className="w-4 h-4 animate-spin" />Creating…</> : <><Plus className="w-4 h-4" />Create Opportunity</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 const ALL_STATUSES = [
   'New', 'Under Review', 'Relevant', 'Possibly Relevant', 'Not Relevant',
@@ -18,6 +115,7 @@ function ScorePill({ score }) {
 }
 
 export default function Opportunities() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [opps, setOpps]           = useState([])
   const [loading, setLoading]     = useState(true)
@@ -25,6 +123,7 @@ export default function Opportunities() {
   const [search, setSearch]       = useState('')
   const [status, setStatus]       = useState(searchParams.get('status') || '')
   const [classification, setClassification] = useState('')
+  const [showNewModal, setShowNewModal] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -50,7 +149,17 @@ export default function Opportunities() {
           <h1 className="text-2xl font-bold text-gray-900">Opportunities</h1>
           <p className="text-sm text-gray-400 mt-0.5">{opps.length} result{opps.length !== 1 ? 's' : ''}</p>
         </div>
+        <button onClick={() => setShowNewModal(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-1.5">
+          <Plus className="w-4 h-4" />New Opportunity
+        </button>
       </div>
+
+      {showNewModal && (
+        <NewOpportunityModal
+          onClose={() => setShowNewModal(false)}
+          onCreated={(created) => navigate(`/opportunities/${created.id}`)}
+        />
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-2 items-center bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm">

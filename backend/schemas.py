@@ -90,12 +90,38 @@ class OpportunityUpdate(OpportunityBase):
     pass
 
 
+class OpportunityCreate(BaseModel):
+    opportunity_title: str = Field(..., min_length=1)
+    agency_name: Optional[str] = None
+    solicitation_number: Optional[str] = None
+    contract_type: Optional[str] = None
+    estimated_value: Optional[str] = None
+    due_date: Optional[datetime] = None
+    emma_link: Optional[str] = None
+    opportunity_summary: Optional[str] = None
+
+
 class StatusUpdate(BaseModel):
     status: str
 
 
 class PacketBuildRequest(BaseModel):
     custom_instructions: Optional[str] = ""
+
+
+class CompleteDraftRequest(BaseModel):
+    document_id: Optional[int] = None
+    draft_text: Optional[str] = None
+    custom_instructions: Optional[str] = ""
+
+
+class CompleteDraftOut(BaseModel):
+    packet: PacketOut
+    analysis: dict
+
+
+class RevisePacketRequest(BaseModel):
+    instruction: str = Field(..., min_length=1)
 
 
 class AuditLogOut(BaseModel):

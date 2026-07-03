@@ -856,11 +856,11 @@ def export_packet_endpoint(
     from packet_export import markdown_to_docx_bytes, markdown_to_pdf_bytes
     try:
         if format == "docx":
-            data = markdown_to_docx_bytes(markdown, title)
+            data = markdown_to_docx_bytes(markdown, title, client_name=opp.agency_name)
             media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             filename = f"{slug}-proposal.docx"
         else:
-            data = markdown_to_pdf_bytes(markdown, title)
+            data = markdown_to_pdf_bytes(markdown, title, client_name=opp.agency_name)
             media_type = "application/pdf"
             filename = f"{slug}-proposal.pdf"
     except Exception as e:

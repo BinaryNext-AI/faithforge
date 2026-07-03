@@ -34,6 +34,9 @@ PLAN_PROMPT = """You are planning a FaithForge proposal. Analyze the opportunity
 ## OPPORTUNITY DATA
 {opportunity_data}
 
+## COMPLIANCE & SUBMISSION REQUIREMENTS (already extracted from the RFP — do not miss anything listed here)
+{compliance}
+
 ## SOLICITATION DOCUMENT EXCERPT
 {document_content}
 {custom_block}
@@ -68,7 +71,7 @@ Return ONLY a valid JSON object (no prose) with this schema:
 
 Requirements:
 - Include 5-7 workstreams/phases covering mobilization/governance, planning/readiness, oversight/execution, organizational readiness/change, customer/stakeholder engagement, go-live/benefits realization (adapt names to the domain).
-- Include 8-12 deliverable_products.
+- Include 8-12 deliverable_products. Every deliverable, report, plan, or document explicitly required by the RFP — whether named in the Required Forms, Required Attachments, Submission Checklist, or Evaluation Criteria above, or found in the solicitation excerpt — MUST appear as its own deliverable_products entry. Do not omit or merge any RFP-mandated deliverable into a generic catch-all line; name it explicitly (e.g. "Monthly Progress Report", "Risk Register", "Governance Charter") so nothing the RFP requires is missing from this list.
 - "labor" MUST use FaithForge's real standard role rates: Program Director $220/hr, Principal Consultant $200/hr, Senior Consultant $185/hr, Project Manager $150/hr, Solution/Technical Architect $150/hr, Solution Developer $145/hr, OCM Specialist $100/hr, Business Analyst $98/hr, PMO Coordinator $95/hr, Administrative Support $65/hr. Select the subset of roles appropriate to this opportunity and choose realistic hours scaled to its size. Do not invent rates.
 - 4-5 supporting_costs (PMO Tools & Reporting Platform, Executive Workshops & Governance Facilitation, Travel & Onsite Support, Administrative & Quality Assurance Support).
 - 4-5 optional_services.
@@ -479,12 +482,12 @@ def build_packet(
     # ── Stage 1: Plan ────────────────────────────────────────────────────────
     logger.info("[packet] stage 1/6: planner")
     plan_tokens = 5000
-    plan_overhead = PLAN_PROMPT.format(opportunity_data=opp_context, document_content="", custom_block=custom_block)
+    plan_overhead = PLAN_PROMPT.format(opportunity_data=opp_context, compliance=compliance, document_content="", custom_block=custom_block)
     max_doc_chars = doc_char_budget(packet_system, plan_overhead, plan_tokens)
     plan_doc = doc_content[:max_doc_chars]
     plan_raw = _openai_chat(
         client, packet_system,
-        PLAN_PROMPT.format(opportunity_data=opp_context, document_content=plan_doc, custom_block=custom_block),
+        PLAN_PROMPT.format(opportunity_data=opp_context, compliance=compliance, document_content=plan_doc, custom_block=custom_block),
         max_tokens=plan_tokens, json_mode=True, label="plan",
     )
     plan = _extract_json(plan_raw) or {}

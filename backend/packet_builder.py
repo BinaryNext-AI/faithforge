@@ -21,7 +21,14 @@ PACKET_FRAME = """You are a professional proposal writer for FaithForge Technolo
 {knowledge_base}
 
 ## Tone & Voice
-Executive, professional, no contractions. FaithForge is a governance and execution partner, not a traditional consulting vendor — an advisor that helps leaders deliver, not one that advises from the sidelines. Use only the facts, metrics, and key phrases provided in the knowledge base above — do not invent statistics, credentials, or claims. Lean on the target-market pain points and buying triggers to tailor language to this specific client's sector."""
+Executive, professional, no contractions. FaithForge is a governance and execution partner, not a traditional consulting vendor — an advisor that helps leaders deliver, not one that advises from the sidelines. Use only the facts, metrics, and key phrases provided in the knowledge base above — do not invent statistics, credentials, or claims. Lean on the target-market pain points and buying triggers to tailor language to this specific client's sector.
+
+## ABSOLUTE ANTI-FABRICATION RULE (this governs everything you write)
+This is a real proposal that a real firm will submit to a real government agency. Fabricating facts is a disqualifying liability, not a stylistic flaw. Therefore:
+- **People:** Bernedette Atong (Founder & Principal Consultant, MSc, PMP, PgMP) is the ONLY real named person. NEVER invent any other named individual, their years of experience, their bio, or their credentials. Do NOT create a "Senior Consultant", "Domain Expert", or any named team member. When the proposal needs a role other than Bernedette, refer to it by role title only (e.g. "Program Manager", "OCM Specialist") and mark the name as **[TO BE NAMED]**.
+- **Missing facts:** When a required fact is NOT in the knowledge base or the opportunity data — a specific date, contract value, reference contact, FEIN, certification number, subcontractor name, resume detail, or years of experience — do NOT guess or fabricate a plausible-sounding value. Instead emit an inline placeholder in this exact form: **[NOTE TO BERNEDETTE: <what to insert and why>]**. A placeholder Bernedette can fill in 30 seconds is infinitely better than a confident fabrication that loses the bid.
+- **Only real credentials/metrics:** Use ONLY the case studies (Amtrak, Inteleos, ASM Global, iHerb), rates, and credentials exactly as they appear in the knowledge base. Never round up, never invent new clients, never attribute a metric to the wrong client.
+- **Firm size honesty:** FaithForge is a lean, executive-led firm. Do not imply a large bench of staff. Frame the lean model as a deliberate strength (direct senior-level involvement), exactly as the real proposals do."""
 
 
 def build_packet_system() -> str:
@@ -48,16 +55,20 @@ Return ONLY a valid JSON object (no prose) with this schema:
   "title": "<the opportunity title>",
   "subtitle": "Independent PMO | Governance Oversight | <Domain> Advisory",
   "proposal_type": "<one-line description of FaithForge's offering>",
-  "client_name": "<agency/client name>",
+  "client_name": "<agency/client name, or null if the data does not state it>",
   "domain": "<the domain, e.g. Utility Transformation, Education and Training>",
   "engagement_months": <integer>,
-  "named_consultant": {{
-    "name": "<full name of a plausible senior domain consultant>",
-    "title": "<their title, e.g. Senior Utility Strategic Consultant & AMI Advisor>",
-    "years": "<e.g. 20+>",
-    "expertise": ["<6-9 industry expertise bullets>"],
-    "bio": "<2 sentence factual-sounding background relevant to this domain>"
-  }},
+  "solicitation_number": "<solicitation/RFP number from the data, or null>",
+  "secondary_id": "<eMMA/BPM/Lot or other secondary reference from the data, or null>",
+  "procurement_officer": "<procurement/contracting officer name from the data, or null>",
+  "procurement_officer_contact": "<their email/phone from the data, or null>",
+  "prepared_for_address": "<agency mailing address from the data, or null>",
+  "submission_method": "<how/where to submit, e.g. via eMMA, email, portal — from the data, or null>",
+  "due_datetime": "<full bid due date and time from the data, or null>",
+  "evaluation_criteria": "<one-line summary of how proposals are scored, from the data, or null>",
+  "min_qualifications_required": <true if the RFP states offeror minimum qualifications, else false>,
+  "confidentiality_tab_required": <true if the RFP requires a confidentiality claim/statement, else false>,
+  "references_required": <integer count of references the RFP requires, or 0 if not stated>,
   "workstreams": [
     {{"name":"<workstream/phase name>","objective":"<1 sentence>","timeframe":"Months X-Y"}}
   ],
@@ -70,6 +81,7 @@ Return ONLY a valid JSON object (no prose) with this schema:
 }}
 
 Requirements:
+- For every metadata field (solicitation_number, procurement_officer, due_datetime, etc.): copy the value ONLY if it actually appears in the opportunity data or solicitation excerpt above. If it is not present, set the field to null — do NOT invent or guess a plausible value. Downstream sections turn null values into "[NOTE TO BERNEDETTE: ...]" placeholders, which is the correct, safe behavior.
 - Include 5-7 workstreams/phases covering mobilization/governance, planning/readiness, oversight/execution, organizational readiness/change, customer/stakeholder engagement, go-live/benefits realization (adapt names to the domain).
 - Include 8-12 deliverable_products. Every deliverable, report, plan, or document explicitly required by the RFP — whether named in the Required Forms, Required Attachments, Submission Checklist, or Evaluation Criteria above, or found in the solicitation excerpt — MUST appear as its own deliverable_products entry. Do not omit or merge any RFP-mandated deliverable into a generic catch-all line; name it explicitly (e.g. "Monthly Progress Report", "Risk Register", "Governance Charter") so nothing the RFP requires is missing from this list.
 - "labor" MUST use FaithForge's real standard role rates: Program Director $220/hr, Principal Consultant $200/hr, Senior Consultant $185/hr, Project Manager $150/hr, Solution/Technical Architect $150/hr, Solution Developer $145/hr, OCM Specialist $100/hr, Business Analyst $98/hr, PMO Coordinator $95/hr, Administrative Support $65/hr. Select the subset of roles appropriate to this opportunity and choose realistic hours scaled to its size. Do not invent rates.
@@ -88,22 +100,32 @@ HEADER_BRIEF_PROMPT = """Using the proposal PLAN and compliance data below, writ
 {compliance}
 {custom_block}
 
-Output EXACTLY this markdown structure:
+Output EXACTLY this markdown structure. The title block below mirrors FaithForge's real submitted proposals. For any {{field}} whose value in the plan is null/empty, do NOT print a fabricated value — instead print a "[NOTE TO BERNEDETTE: confirm <field> from the solicitation]" placeholder in that spot. Never invent a solicitation number, procurement officer, address, due date, or submission method.
 
 # REQUEST FOR PROPOSAL RESPONSE
 
 # {{title}}
 ## {{subtitle}}
 
+[If the plan has a solicitation_number and/or secondary_id, print this line; otherwise print the NOTE placeholder:]
+**Solicitation # {{solicitation_number}}  |  {{secondary_id}}**
+
+**Prepared for**
+{{client_name}}
+[If prepared_for_address exists, print it on the next line]
+[If procurement_officer exists, print: "Procurement Officer: {{procurement_officer}}  |  {{procurement_officer_contact}}"]
+
+**Submitted by**
+FaithForge Technologies & Consulting LLC
+Bernedette Atong, PMP, PgMP — Founder & Principal Consultant
+410-862-2975  |  info@faithforgetech.com  |  www.faithforgetech.com
+
 | Field | Response |
 |-------|----------|
-| Submitted by | FaithForge Technologies & Consulting LLC |
-| Primary Contact | Bernedette Atong, PMP, PgMP — Founder & Principal Consultant |
-| Phone | 410-862-2975 |
-| Email / Website | info@faithforgetech.com \\| www.faithforgetech.com |
 | Proposal Type | {{proposal_type}} |
-
-*Prepared for {{client_name}}*
+| Date | [today's date — print "[NOTE TO BERNEDETTE: confirm submission date]" if unsure] |
+| Bid Due | {{due_datetime}} |
+| Submission Method | {{submission_method}} |
 
 ---
 
@@ -157,9 +179,9 @@ Output this structure (each subsection must be 2-3 substantial paragraphs of spe
 [A specific closing pledge paragraph for this engagement.]
 
 ### 1.5 FaithForge Advisory Team
-[3-4 paragraphs describing the team: Bernedette Atong as Principal Consultant (PMP, PgMP); the named domain consultant from the plan (use their title and relevant senior experience without inventing a specific number of years); and an Organizational Change Management (OCM) specialist. Explain what each brings.]
+[2-3 paragraphs describing the executive-led delivery team. Bernedette Atong, PMP, PgMP, Founder & Principal Consultant, is the ONLY named person and personally leads this engagement — describe the senior-level governance and execution leadership she brings. Then describe the supporting roles BY ROLE TITLE ONLY (e.g. Program Manager, OCM Specialist, PMO Coordinator) — do NOT invent names, do NOT invent years of experience or bios for them. Frame FaithForge's lean, executive-led model as a deliberate strength: the client works directly with senior leadership rather than a diluted junior team. If the RFP requires specific named additional staff, add: "[NOTE TO BERNEDETTE: name and attach resumes for additional key personnel required by the solicitation]".]
 
-Output only the markdown. No contractions. Executive tone."""
+Output only the markdown. No contractions. Executive tone. Never invent a named team member other than Bernedette Atong."""
 
 SECTION2_PROMPT = """Write SECTION 2: PROPOSED SCOPE OF WORK of the FaithForge proposal in rich markdown. Expand the plan's workstreams into a full phased scope.
 
@@ -209,6 +231,8 @@ Output this structure:
 
 ## SECTION 3: GENERAL BACKGROUND OF APPLICANT VENDOR
 
+[IF the plan's "min_qualifications_required" is true, FIRST output a "### 3.0 Minimum Qualifications Narrative" subsection: an intro sentence affirming FaithForge meets the solicitation's minimum qualifications, then address each qualification the RFP names using ONLY real knowledge-base facts. Where a qualification needs a specific fact not in the knowledge base (e.g. exact engagement dates to prove a "5+ years" threshold), insert a "[NOTE TO BERNEDETTE: ...]" placeholder rather than a fabricated claim. If min_qualifications_required is false, skip this subsection entirely.]
+
 ### 3.1 {domain_hint} & Program Governance Experience
 [2-3 paragraphs. Open with FaithForge's identity: a governance and execution partner that installs structure, governance, and execution discipline where complexity and accountability intersect. Reference the 4-Tier engagement model. Then a bullet list of 5-6 relevant experience areas specific to this domain.]
 
@@ -224,10 +248,21 @@ Output this structure:
 ### 3.5 Experience with Program Controls, Data Assessment, and Executive Reporting
 [Intro line + 6-7 bullets including KPI reporting and dashboards, data quality and reporting integrity, executive dashboard cadence, RAID/risk registers, performance baselines, weekly status reporting.]
 
-### 3.6 Key Personnel and Team Structure
-| Key Role | Responsibilities |
-|----------|-----------------|
-[one row per role in the plan's "labor" list. The lead row must read "Principal Consultant — Bernedette Atong, MSc, PMP, PgMP". The Senior Consultant row must use the named_consultant's name. Each responsibility = 1-2 sentences specific to this engagement.]
+### 3.6 References
+[Intro sentence noting FaithForge provides references attesting to work of similar complexity. Then present FaithForge's real past engagements from the knowledge base Case Studies as reference entries — Amtrak, Inteleos, ASM Global, iHerb — choosing the ones most relevant to this opportunity's domain. For EACH reference use this format:]
+**Reference — <Client Name>**
+<1-2 sentence description of the scope and the most relevant measurable result, drawn ONLY from the case study. Then:> [NOTE TO BERNEDETTE: add reference contact name, title, phone, email, and exact contract dates for <Client> to complete the required reference form.]
+[Do NOT invent contact names, phone numbers, emails, or dates — those go in the NOTE placeholder. If the RFP requires a specific number of references (see plan.references_required) and FaithForge has fewer relevant case studies, add: "[NOTE TO BERNEDETTE: the solicitation requires N references — confirm which additional engagements to include]".]
+
+### 3.7 Key Personnel and Team Structure
+[Intro sentence: FaithForge proposes an executive-led delivery team led personally by Bernedette Atong.]
+
+| Role | Proposed Staff | Responsibilities |
+|------|---------------|-----------------|
+| Principal Consultant / Executive Lead | Bernedette Atong, MSc, PMP, PgMP | <1-2 sentences: overall governance, executive oversight, quality assurance, primary point of accountability to the client.> |
+[Then one row PER OTHER role in the plan's "labor" list. The "Proposed Staff" cell for every one of these rows MUST be exactly "[TO BE NAMED]" — never invent a name. Responsibilities = 1-2 sentences specific to this engagement.]
+
+[After the table add: "[NOTE TO BERNEDETTE: replace each [TO BE NAMED] with a confirmed staff member and attach resumes / letters of intended commitment where the solicitation requires them.]"]
 
 **FaithForge Proposed Team Governance Model**
 
@@ -235,9 +270,9 @@ Output this structure:
 |-----------------|---------|
 | {client_hint} Executive Sponsors | Provide strategic direction, decision authority, and executive oversight. |
 | FaithForge Principal Consultant | Primary executive advisor and PMO lead — Bernedette Atong, MSc, PMP, PgMP. |
-[3-4 more layers]
+[2-3 more layers, described by role only — no invented names]
 
-### 3.7 Founder & Principal Consultant Profile
+### 3.8 Founder & Principal Consultant Profile
 
 **Bernedette Atong, MSc, PMP, PgMP**
 *Founder & Principal Consultant — FaithForge Technologies & Consulting LLC*
@@ -245,25 +280,14 @@ Output this structure:
 **Education:** MSc Information Technology | BBA | BSc Economics
 **Certifications:** Project Management Professional (PMP) | Program Management Professional (PgMP) | Professional Scrum Master (PSM) | Lean Six Sigma | AI Prompting
 **Industry Expertise:**
-- Transportation & Digital Technology: Led cross-functional teams of 14+ members delivering complex digital initiatives; 12% client satisfaction improvement
-- E-Commerce & Global Data: Managed end-to-end lifecycle of $12M unified data analytics platform; introduced PMBOK standards improving delivery predictability
-- Food Produce & Procurement: Coordinated $16M annual procurement; implemented risk management procedures streamlining vendor negotiations
-- Construction & Engineering: Strategic oversight of multidisciplinary infrastructure projects yielding $600k+ earnings; 40% savings on project costs
+- Transportation & Digital Technology: Led cross-functional teams of 14+ members delivering complex digital initiatives
+- E-Commerce & Global Data: Managed end-to-end lifecycle of a $12M+ unified data analytics platform; introduced PMBOK standards improving delivery predictability
+- Program & Portfolio Governance: Managed $12M+ program portfolios across enterprise systems
 - Government & Healthcare: Compliance-focused governance across HIPAA, SOC2, and public-sector regulatory frameworks
 **Relevant Experience:**
-[2-paragraph narrative tying Bernedette's background directly to this engagement's domain and the client's specific challenges. End with her commitment to serve as Principal Consultant and engagement lead for this engagement.]
+[2-paragraph narrative tying Bernedette's real documented background (from the knowledge base bio) directly to this engagement's domain and the client's specific challenges. Use only credentials and facts present in the knowledge base. End with her commitment to serve as Principal Consultant and engagement lead. Do NOT invent specific prior clients or metrics beyond those in the knowledge base.]
 
-### 3.8 {domain_hint} Consultant Profile
-[Use the named_consultant from the plan. Format:]
-**<name>**
-*<title>*
-**Years of Experience: <years>**
-**Industry Expertise:**
-- <expertise bullets>
-**Relevant Experience:**
-[2 paragraph narrative bio based on the plan's bio, ending with their role on this engagement.]
-
-Output only the markdown. No contractions."""
+Output only the markdown. No contractions. Bernedette Atong is the ONLY person you may name — every other staff member is "[TO BE NAMED]"."""
 
 SECTION4_PROMPT = """Write SECTION 4: BUDGET DESCRIPTION of the FaithForge proposal in rich markdown. Use the EXACT numbers from the plan — do not invent new numbers; every total must match the plan.
 
@@ -341,9 +365,45 @@ Output this structure:
 | **Total Potential Contract Value** | **${total_value}** |
 
 ### 4.4 Plans for Subcontracting and Specialized Advisory Support
-[1-2 paragraphs on managing the named consultant/subcontractor under FaithForge's direct management.]
+[1-2 paragraphs. FaithForge does not anticipate major subcontracting for the base scope; all core services are delivered directly by FaithForge under Bernedette Atong's leadership. State that if specialized subject-matter support is required, FaithForge will identify and manage such support under its direct oversight, held to the same standards of quality and accountability. Do NOT name a specific subcontractor or individual — if the solicitation requires a subcontractor list, add "[NOTE TO BERNEDETTE: list any confirmed subcontractors and their certifications if required by the solicitation]".]
 
 Output only the markdown. No contractions."""
+
+
+SECTION5_PROMPT = """Write SECTION 5: SIGNED ACKNOWLEDGEMENT AND CLOSING of the FaithForge proposal in markdown. Every FaithForge submission ends with this section. Use the plan for the client name and solicitation number.
+
+## PROPOSAL PLAN (JSON)
+{plan}
+{custom_block}
+
+Output this structure:
+
+## SECTION 5: SIGNED ACKNOWLEDGEMENT OF SOLICITATION TERMS AND CONDITIONS
+
+[One paragraph: FaithForge Technologies & Consulting LLC acknowledges and understands the requirements associated with providing <the proposed services> for <client>, and is committed to complying with the solicitation's requirements, maintaining ethical business practices, and delivering professional, mission-aligned services.]
+
+[If the plan has a solicitation_number, add a sentence acknowledging receipt of the solicitation and any addenda, followed by: "[NOTE TO BERNEDETTE: confirm all issued amendments/addenda on the procurement portal and attach signed acknowledgement of receipt for each before submitting.]"]
+
+**Acknowledged and Agreed:**
+
+Signature: ________________________________________
+Printed Name: Bernedette Atong
+Title: Founder & Principal Consultant
+Firm Name: FaithForge Technologies & Consulting LLC
+City, State: Elkridge, MD
+Phone: 410-862-2975
+Email: info@faithforgetech.com
+Date: [NOTE TO BERNEDETTE: sign and date at submission]
+
+### Closing Statement
+[2 paragraphs. First: FaithForge's commitment to delivering for this specific client and engagement, tied to the client's stated goals. Second: reinforce the governance-first, executive-led, outcome-focused approach and express that FaithForge is honored by the opportunity. Then:]
+
+Respectfully submitted,
+Bernedette Atong
+Founder & Principal Consultant
+FaithForge Technologies & Consulting LLC
+
+Output only the markdown. No contractions. Bernedette Atong is the only person you may name."""
 
 
 def format_opportunity_context(opp: Dict[str, Any]) -> str:
@@ -494,7 +554,7 @@ def build_packet(
     t_start = _time.monotonic()
 
     # ── Stage 1: Plan ────────────────────────────────────────────────────────
-    logger.info("[packet] stage 1/6: planner")
+    logger.info("[packet] stage 1/7: planner")
     plan_tokens = 5000
     plan_overhead = PLAN_PROMPT.format(opportunity_data=opp_context, compliance=compliance, document_content="", custom_block=custom_block)
     max_doc_chars = doc_char_budget(packet_system, plan_overhead, plan_tokens)
@@ -536,11 +596,12 @@ def build_packet(
         ("section2-scope", SECTION2_PROMPT, 4500),
         ("section3-background", SECTION3_PROMPT, 4000),
         ("section4-budget", SECTION4_PROMPT, 4000),
+        ("section5-acknowledgement", SECTION5_PROMPT, 1500),
     ]
 
     parts = []
     for i, (label, prompt_tmpl, max_tokens) in enumerate(SECTION_LABELS, start=2):
-        logger.info("[packet] stage %d/6: %s", i, label)
+        logger.info("[packet] stage %d/%d: %s", i, len(SECTION_LABELS) + 1, label)
         result = _openai_chat(client, packet_system, _safe_format(prompt_tmpl, fmt),
                             max_tokens=max_tokens, label=label)
         if not result or not result.strip():

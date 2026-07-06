@@ -8,7 +8,7 @@ import io
 import re
 from typing import List, Optional, Tuple
 
-from packet_builder import _is_table_sep, _table_cells
+from packet_builder import _is_table_sep, _table_cells, _normalize_row
 
 NAVY_RGB = (0x1E, 0x3A, 0x8A)
 COPPER_RGB = (0xC2, 0x65, 0x2A)
@@ -22,12 +22,16 @@ def _parse_blocks(markdown: str) -> List[Tuple]:
         line = lines[i]
         s = line.strip()
 
+        if re.match(r"^```\w*$", s):
+            i += 1
+            continue
+
         if s.startswith("|") and i + 1 < len(lines) and _is_table_sep(lines[i + 1]):
             header = _table_cells(s)
             i += 2
             rows = []
             while i < len(lines) and lines[i].strip().startswith("|"):
-                rows.append(_table_cells(lines[i]))
+                rows.append(_normalize_row(_table_cells(lines[i]), len(header)))
                 i += 1
             blocks.append(("table", header, rows))
             continue
@@ -257,6 +261,27 @@ def _pdf_safe(text: str) -> str:
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
+def _column_fractions(header: List[str], rows: List[List[str]]) -> List[float]:
+    """Proportion each column's width to its content length instead of splitting
+    evenly — equal-width columns caused long cells to overflow past their border
+    into neighboring columns (fpdf2's cell() does not wrap or clip text)."""
+    n = len(header)
+    if n == 0:
+        return []
+    avg_len = []
+    for i in range(n):
+        lengths = [len(_strip_bold(header[i]))]
+        for row in rows[:40]:
+            if i < len(row):
+                lengths.append(len(_strip_bold(row[i])))
+        avg_len.append((sum(lengths) / len(lengths)) if lengths else 1)
+    total = sum(avg_len) or 1
+    min_frac = 0.14
+    fracs = [max(min_frac, l / total) for l in avg_len]
+    fsum = sum(fracs) or 1
+    return [f / fsum for f in fracs]
+
+
 def _draw_cover_page(pdf, title: str, client_name: Optional[str] = None) -> None:
     title = _pdf_safe(title)
     client_name = _pdf_safe(client_name) if client_name else client_name
@@ -311,6 +336,7 @@ def _draw_cover_page(pdf, title: str, client_name: Optional[str] = None) -> None
 
 def markdown_to_pdf_bytes(markdown: str, title: str = "FaithForge Proposal", client_name: Optional[str] = None) -> bytes:
     from fpdf import FPDF
+    from fpdf.fonts import FontFace
 
     pdf = FPDF(format="Letter")
     pdf.set_title(title)
@@ -362,19 +388,34 @@ def markdown_to_pdf_bytes(markdown: str, title: str = "FaithForge Proposal", cli
             header, rows = block[1], block[2]
             if not header:
                 continue
-            col_width = usable_width / len(header)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_fill_color(*NAVY_RGB)
-            pdf.set_text_color(255, 255, 255)
-            for h in header:
-                pdf.cell(col_width, 7, _pdf_safe(_strip_bold(h)), border=1, fill=True)
-            pdf.ln()
+            col_fracs = _column_fractions(header, rows)
             pdf.set_font("Helvetica", "", 9)
+            pdf.set_draw_color(*COPPER_RGB)
+            pdf.set_line_width(0.3)
+            # fpdf2's table() snapshots whatever fill/text color is currently
+            # set as its base cell style — reset here or the color from the
+            # preceding heading block (e.g. navy h2 text) bleeds into every
+            # body cell instead of plain black.
+            pdf.set_fill_color(0, 0, 0)
             pdf.set_text_color(*black)
-            for row in rows:
-                for cell_text in row:
-                    pdf.cell(col_width, 6.5, _pdf_safe(_strip_bold(cell_text))[:60], border=1)
-                pdf.ln()
+            head_style = FontFace(emphasis="BOLD", color=(255, 255, 255), fill_color=NAVY_RGB)
+            with pdf.table(
+                col_widths=col_fracs,
+                headings_style=head_style,
+                text_align="LEFT",
+                v_align="TOP",
+                line_height=5,
+                padding=(1.5, 2),
+                borders_layout="ALL",
+                align="LEFT",
+            ) as pdf_table:
+                header_row = pdf_table.row()
+                for h in header:
+                    header_row.cell(_pdf_safe(_strip_bold(h)))
+                for row in rows:
+                    table_row = pdf_table.row()
+                    for cell_text in row:
+                        table_row.cell(_pdf_safe(_strip_bold(cell_text)))
             pdf.ln(3)
         elif kind in ("bullet", "numbered", "checkbox"):
             pdf.set_font("Helvetica", "", 10)

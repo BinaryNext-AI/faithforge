@@ -399,6 +399,18 @@ def _compliance_context(opp: Dict[str, Any]) -> str:
     return "\n".join(lines) or "No compliance data extracted."
 
 
+def _strip_code_fence(text: str) -> str:
+    """Models occasionally wrap plain-markdown output in a ```markdown ... ```
+    fence — strip it so the fence markers don't leak into the rendered proposal."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.split("\n")[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
 def _openai_chat(client, system: str, user: str, max_tokens: int, retries: int = 4,
                  json_mode: bool = False, label: str = "openai_call") -> str:
     """Single OpenAI call with TPM-aware trimming and rate-limit backoff."""
@@ -422,6 +434,8 @@ def _openai_chat(client, system: str, user: str, max_tokens: int, retries: int =
                 **kwargs,
             )
             content = resp.choices[0].message.content or ""
+            if not json_mode:
+                content = _strip_code_fence(content)
             elapsed = _time.monotonic() - t0
             usage = getattr(resp, "usage", None)
             usage_str = (f"in={usage.prompt_tokens} out={usage.completion_tokens}"
@@ -808,6 +822,19 @@ def _table_cells(line: str):
     return [c.strip() for c in line.strip().strip('|').split('|')]
 
 
+def _normalize_row(cells: list, ncols: int) -> list:
+    """Force a parsed row to the header's column count. A row can end up with
+    extra cells when a table cell contains an unescaped literal '|' (e.g. an
+    email/website pair written as "a@b.com | example.com") — rejoin the
+    overflow into the last column instead of letting it shift into a
+    nonexistent column and break the table's alignment."""
+    if len(cells) > ncols:
+        cells = cells[:ncols - 1] + [" | ".join(cells[ncols - 1:])]
+    elif len(cells) < ncols:
+        cells = cells + [""] * (ncols - len(cells))
+    return cells
+
+
 _FF_CSS = """
 <style>
 .ff-doc{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1a202c;line-height:1.65;background:#fff;}
@@ -858,6 +885,10 @@ def markdown_to_html(text: str) -> str:
             line = lines[i]
             s = line.strip()
 
+            if re.match(r'^```\w*$', s):
+                i += 1
+                continue
+
             # Table block
             if s.startswith('|') and i + 1 < len(lines) and _is_table_sep(lines[i + 1]):
                 close_lists()
@@ -867,7 +898,7 @@ def markdown_to_html(text: str) -> str:
                 output.append('</tr></thead><tbody>')
                 i += 2
                 while i < len(lines) and lines[i].strip().startswith('|'):
-                    cells = _table_cells(lines[i])
+                    cells = _normalize_row(_table_cells(lines[i]), len(header))
                     output.append('<tr>' + ''.join(f'<td>{_inline_md(c)}</td>' for c in cells) + '</tr>')
                     i += 1
                 output.append('</tbody></table>')

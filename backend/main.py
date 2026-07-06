@@ -623,7 +623,7 @@ def review_documents_endpoint(
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 20000)}")
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 45000)}")
     opp_context = f"""Title: {opp.opportunity_title or opp.email_subject}
 Agency: {opp.agency_name}
 Solicitation: {opp.solicitation_number}
@@ -692,7 +692,7 @@ def build_packet_endpoint(
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 45000)}")
     opp_dict = {
         col.name: getattr(opp, col.name)
         for col in opp.__table__.columns

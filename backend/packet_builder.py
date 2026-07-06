@@ -66,7 +66,7 @@ Return ONLY a valid JSON object (no prose) with this schema:
   "submission_method": "<a SHORT concise phrase for how/where to submit, e.g. 'via eMMA', 'email to procurement@agency.gov', 'sealed hard copy to the address above' — distill this from the data, do not copy a full sentence/paragraph verbatim; null if not stated>",
   "due_datetime": "<full bid due date and time from the data, or null>",
   "evaluation_criteria": "<one-line summary of how proposals are scored, from the data, or null>",
-  "min_qualifications_required": <true ONLY if the RFP explicitly lists specific offeror minimum-qualification criteria (e.g. required years of experience, certifications, licensure thresholds) that must be met to be eligible. If the RFP explicitly states there are no minimum qualifications, or never mentions minimum qualifications at all, set this to false. If uncertain because the excerpt is incomplete, default to false — an omitted subsection is a fast human fix, a wrongly-included one reads as though FaithForge misread the RFP>,
+  "minimum_qualifications_text": "<quote the EXACT minimum-qualification criteria from the RFP text (years of experience, certifications, licensure thresholds, etc.) ONLY if such specific language is actually present in the opportunity data or solicitation excerpt above. If the RFP explicitly states there are no minimum qualifications (e.g. 'not applicable', 'no minimum qualifications for this procurement'), or never mentions minimum qualifications at all, or you are unsure because the excerpt doesn't cover it, set this to null — do not paraphrase or guess. A null here is the safe default.>",
   "confidentiality_tab_required": <true if the RFP requires a confidentiality claim/statement, else false>,
   "references_required": <integer count of references the RFP requires, or 0 if not stated>,
   "required_key_personnel": ["<exact Key Personnel role title(s) the RFP itself names, e.g. 'Principal', 'Program Manager', 'Principal Planner' — copy the RFP's own wording verbatim, do NOT substitute FaithForge's internal labor-category names. Empty array if the RFP does not name specific required personnel roles/titles.>"],
@@ -233,7 +233,7 @@ Output this structure:
 
 ## SECTION 3: GENERAL BACKGROUND OF APPLICANT VENDOR
 
-[IF the plan's "min_qualifications_required" is true, FIRST output a "### 3.0 Minimum Qualifications Narrative" subsection: an intro sentence affirming FaithForge meets the solicitation's minimum qualifications, then address each qualification the RFP names using ONLY real knowledge-base facts. Where a qualification needs a specific fact not in the knowledge base (e.g. exact engagement dates to prove a "5+ years" threshold), insert a "[NOTE TO BERNEDETTE: ...]" placeholder rather than a fabricated claim. If min_qualifications_required is false, skip this subsection entirely.]
+[IF the plan's "min_qualifications_required" is true, FIRST output a "### 3.0 Minimum Qualifications Narrative" subsection: an intro sentence affirming FaithForge meets the solicitation's minimum qualifications, then address EXACTLY the qualification criteria quoted in plan.minimum_qualifications_text (do not invent additional criteria beyond what is quoted there) using ONLY real knowledge-base facts. Where a qualification needs a specific fact not in the knowledge base (e.g. exact engagement dates to prove a "5+ years" threshold), insert a "[NOTE TO BERNEDETTE: ...]" placeholder rather than a fabricated claim. If min_qualifications_required is false, skip this subsection entirely — do not write it "just in case."]
 
 ### 3.1 {domain_hint} & Program Governance Experience
 [2-3 paragraphs. Open with FaithForge's identity: a governance and execution partner that installs structure, governance, and execution discipline where complexity and accountability intersect. Reference the 4-Tier engagement model. Then a bullet list of 5-6 relevant experience areas specific to this domain.]
@@ -587,6 +587,9 @@ def build_packet(
         logger.error("[packet] planner returned invalid plan. raw response (first 500 chars): %s", plan_raw[:500])
         raise RuntimeError("Proposal planner did not return a valid budget plan. Please rebuild the packet.")
     _compute_totals(plan)
+    # Decide min_qualifications_required from Python, not the model's own boolean judgment —
+    # gate it strictly on whether the model actually quoted real qualification text.
+    plan["min_qualifications_required"] = bool((plan.get("minimum_qualifications_text") or "").strip())
     plan_json = json.dumps(plan, indent=1)
     logger.info("[packet] plan OK — %d workstreams, %d labor rows, total_value=$%s",
                 len(plan.get("workstreams", [])), len(plan.get("labor", [])),

@@ -136,7 +136,7 @@ Output EXACTLY this markdown structure, starting directly with the heading below
 ### 0.7 Recommended Internal Owner & Next Steps
 [Recommended owner + 3-5 numbered next steps with timing]
 
-Replace {{placeholders}} with real values from the plan. Output only the markdown."""
+Output only the markdown."""
 
 SECTION1_PROMPT = """Write SECTION 1: EXECUTIVE SUMMARY of the FaithForge proposal in rich, executive markdown prose. Use the plan for consistency.
 

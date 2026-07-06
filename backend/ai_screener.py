@@ -151,6 +151,12 @@ Provide a comprehensive review as a JSON object:
 
 
 TPM_LIMIT = 200000
+# gpt-4o-mini's real per-request context window (input + output combined).
+# This is smaller than TPM_LIMIT (a per-minute rate limit, not a per-request
+# size cap) — sizing a single prompt against TPM_LIMIT alone could build a
+# request that fits the rate limit but still gets rejected by the model with
+# context_length_exceeded. Always bound by whichever ceiling is smaller.
+MODEL_CONTEXT_LIMIT = 128000
 TPM_SAFETY = 1000
 
 
@@ -160,8 +166,9 @@ def est_tokens(text: str) -> int:
 
 
 def fit_prompt_to_budget(system: str, prompt: str, max_tokens: int) -> str:
-    """Trim `prompt` so system + prompt + completion stays under the TPM limit."""
-    budget = TPM_LIMIT - TPM_SAFETY - max_tokens - est_tokens(system)
+    """Trim `prompt` so system + prompt + completion stays under the model's context window."""
+    ceiling = min(TPM_LIMIT, MODEL_CONTEXT_LIMIT)
+    budget = ceiling - TPM_SAFETY - max_tokens - est_tokens(system)
     if budget < 400:
         budget = 400
     max_chars = budget * 4
@@ -172,8 +179,9 @@ def fit_prompt_to_budget(system: str, prompt: str, max_tokens: int) -> str:
 
 def doc_char_budget(system: str, prompt_overhead: str, max_tokens: int) -> int:
     """Max characters of document text that fit, given fixed prompt parts + completion."""
+    ceiling = min(TPM_LIMIT, MODEL_CONTEXT_LIMIT)
     used = est_tokens(system) + est_tokens(prompt_overhead) + max_tokens + TPM_SAFETY
-    return max(400, TPM_LIMIT - used) * 4
+    return max(400, ceiling - used) * 4
 
 
 def call_openai(prompt: str, system: str = SYSTEM_PROMPT, max_tokens: int = 4096) -> str:

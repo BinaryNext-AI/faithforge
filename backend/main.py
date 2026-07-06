@@ -623,7 +623,7 @@ def review_documents_endpoint(
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 45000)}")
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 200000)}")
     opp_context = f"""Title: {opp.opportunity_title or opp.email_subject}
 Agency: {opp.agency_name}
 Solicitation: {opp.solicitation_number}
@@ -692,7 +692,7 @@ def build_packet_endpoint(
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 45000)}")
+        doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 200000)}")
     opp_dict = {
         col.name: getattr(opp, col.name)
         for col in opp.__table__.columns
@@ -749,7 +749,7 @@ def complete_draft_endpoint(
         draft_doc = next((d for d in opp.documents if d.id == draft_document_id), None)
         if not draft_doc:
             raise HTTPException(status_code=404, detail="Draft document not found on this opportunity.")
-        draft_text = truncate_for_ai(process_document(draft_doc.file_path, UPLOAD_PATH, draft_doc.file_content), 40000)
+        draft_text = truncate_for_ai(process_document(draft_doc.file_path, UPLOAD_PATH, draft_doc.file_content), 150000)
 
     if not draft_text:
         raise HTTPException(status_code=400, detail="Draft is empty — nothing to analyze.")
@@ -760,7 +760,7 @@ def complete_draft_endpoint(
         if doc.id == draft_document_id:
             continue
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
-        rfp_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 15000)}")
+        rfp_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 150000)}")
 
     opp.status = "Packet Building"
     opp.updated_at = datetime.utcnow()

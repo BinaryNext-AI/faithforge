@@ -63,12 +63,13 @@ Return ONLY a valid JSON object (no prose) with this schema:
   "procurement_officer": "<procurement/contracting officer name from the data, or null>",
   "procurement_officer_contact": "<their email/phone from the data, or null>",
   "prepared_for_address": "<agency mailing address from the data, or null>",
-  "submission_method": "<how/where to submit, e.g. via eMMA, email, portal — from the data, or null>",
+  "submission_method": "<a SHORT concise phrase for how/where to submit, e.g. 'via eMMA', 'email to procurement@agency.gov', 'sealed hard copy to the address above' — distill this from the data, do not copy a full sentence/paragraph verbatim; null if not stated>",
   "due_datetime": "<full bid due date and time from the data, or null>",
   "evaluation_criteria": "<one-line summary of how proposals are scored, from the data, or null>",
-  "min_qualifications_required": <true if the RFP states offeror minimum qualifications, else false>,
+  "min_qualifications_required": <true ONLY if the RFP explicitly lists specific offeror minimum-qualification criteria (e.g. required years of experience, certifications, licensure thresholds) that must be met to be eligible. If the RFP explicitly states there are no minimum qualifications, or never mentions minimum qualifications at all, set this to false. If uncertain because the excerpt is incomplete, default to false — an omitted subsection is a fast human fix, a wrongly-included one reads as though FaithForge misread the RFP>,
   "confidentiality_tab_required": <true if the RFP requires a confidentiality claim/statement, else false>,
   "references_required": <integer count of references the RFP requires, or 0 if not stated>,
+  "required_key_personnel": ["<exact Key Personnel role title(s) the RFP itself names, e.g. 'Principal', 'Program Manager', 'Principal Planner' — copy the RFP's own wording verbatim, do NOT substitute FaithForge's internal labor-category names. Empty array if the RFP does not name specific required personnel roles/titles.>"],
   "workstreams": [
     {{"name":"<workstream/phase name>","objective":"<1 sentence>","timeframe":"Months X-Y"}}
   ],
@@ -87,6 +88,7 @@ Requirements:
 - "labor" MUST use FaithForge's real standard role rates: Program Director $220/hr, Principal Consultant $200/hr, Senior Consultant $185/hr, Project Manager $150/hr, Solution/Technical Architect $150/hr, Solution Developer $145/hr, OCM Specialist $100/hr, Business Analyst $98/hr, PMO Coordinator $95/hr, Administrative Support $65/hr. Select the subset of roles appropriate to this opportunity and choose realistic hours scaled to its size. Do not invent rates.
 - 4-5 supporting_costs (PMO Tools & Reporting Platform, Executive Workshops & Governance Facilitation, Travel & Onsite Support, Administrative & Quality Assurance Support).
 - 4-5 optional_services.
+- required_key_personnel: check the compliance data and solicitation excerpt for a "Key Personnel", "Staffing Plan", or "Personnel Qualifications" section that names specific required roles/titles. If found, list those exact titles (this becomes the Key Personnel table in the proposal, so it must match what the evaluator scores against). If the RFP does not name specific roles, return an empty array — FaithForge's internal labor categories will be used instead.
 
 CRITICAL: Every numeric field must be a single final integer literal (e.g. 162000). NEVER write arithmetic expressions like "100 + 200". Do not include any total fields — totals are computed separately."""
 
@@ -112,8 +114,8 @@ Output EXACTLY this markdown structure. The title block below mirrors FaithForge
 
 **Prepared for**
 {{client_name}}
-[If prepared_for_address exists, print it on the next line]
-[If procurement_officer exists, print: "Procurement Officer: {{procurement_officer}}  |  {{procurement_officer_contact}}"]
+[If prepared_for_address exists, print it on the next line; otherwise print "[NOTE TO BERNEDETTE: confirm prepared_for_address from the solicitation]"]
+[If procurement_officer exists, print: "Procurement Officer: {{procurement_officer}}  |  {{procurement_officer_contact}}" — and if procurement_officer_contact specifically is null, print "[NOTE TO BERNEDETTE: confirm procurement officer contact info]" in its place; otherwise (no procurement_officer at all) print "[NOTE TO BERNEDETTE: confirm procurement/contracting officer name and contact from the solicitation]"]
 
 **Submitted by**
 FaithForge Technologies & Consulting LLC
@@ -257,10 +259,14 @@ Output this structure:
 ### 3.7 Key Personnel and Team Structure
 [Intro sentence: FaithForge proposes an executive-led delivery team led personally by Bernedette Atong.]
 
+[Decide the table's Role column based on plan.required_key_personnel:
+- If it is a NON-EMPTY list, the RFP names specific required titles — the table MUST use those exact titles, verbatim, as the Role column (this is what the evaluator scores against). Assign Bernedette Atong to whichever listed title is the most senior/principal-level (e.g. "Principal", "Program Manager"). Do not add, drop, rename, or merge any title from required_key_personnel, and do not substitute FaithForge's internal labor-category names for the RFP's own title.
+- If it is EMPTY, fall back to FaithForge's internal roles: one row per entry in plan.labor.]
+
 | Role | Proposed Staff | Responsibilities |
 |------|---------------|-----------------|
-| Principal Consultant / Executive Lead | Bernedette Atong, MSc, PMP, PgMP | <1-2 sentences: overall governance, executive oversight, quality assurance, primary point of accountability to the client.> |
-[Then one row PER OTHER role in the plan's "labor" list. The "Proposed Staff" cell for every one of these rows MUST be exactly "[TO BE NAMED]" — never invent a name. Responsibilities = 1-2 sentences specific to this engagement.]
+| <Bernedette's role per the rule above> | Bernedette Atong, MSc, PMP, PgMP | <1-2 sentences: overall governance, executive oversight, quality assurance, primary point of accountability to the client.> |
+[Then one row PER remaining role (from required_key_personnel or plan.labor per the rule above). The "Proposed Staff" cell for every one of these rows MUST be exactly "[TO BE NAMED]" — never invent a name. Responsibilities = 1-2 sentences specific to this engagement.]
 
 [After the table add: "[NOTE TO BERNEDETTE: replace each [TO BE NAMED] with a confirmed staff member and attach resumes / letters of intended commitment where the solicitation requires them.]"]
 
@@ -406,6 +412,18 @@ FaithForge Technologies & Consulting LLC
 Output only the markdown. No contractions. Bernedette Atong is the only person you may name."""
 
 
+def _fmt_field_value(val) -> str:
+    """Render a field value for prompt context. datetime columns come back
+    from the DB as raw datetime objects — str()'ing one with an unknown
+    time-of-day produces a literal "2026-07-14 00:00:00" that the model then
+    echoes verbatim into the proposal. Format dates human-readable instead."""
+    if isinstance(val, datetime):
+        if val.hour == 0 and val.minute == 0 and val.second == 0:
+            return val.strftime("%B %d, %Y")
+        return val.strftime("%B %d, %Y, %I:%M %p")
+    return str(val)
+
+
 def format_opportunity_context(opp: Dict[str, Any]) -> str:
     lines = []
     fields = [
@@ -432,7 +450,7 @@ def format_opportunity_context(opp: Dict[str, Any]) -> str:
     for label, key in fields:
         val = opp.get(key)
         if val:
-            lines.append(f"{label}: {val}")
+            lines.append(f"{label}: {_fmt_field_value(val)}")
     return "\n".join(lines)
 
 
@@ -455,7 +473,7 @@ def _compliance_context(opp: Dict[str, Any]) -> str:
     for label, key in fields:
         val = opp.get(key)
         if val:
-            lines.append(f"{label}: {val}")
+            lines.append(f"{label}: {_fmt_field_value(val)}")
     return "\n".join(lines) or "No compliance data extracted."
 
 

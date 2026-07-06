@@ -60,9 +60,9 @@ Return ONLY a valid JSON object (no prose) with this schema:
   "engagement_months": <integer>,
   "solicitation_number": "<solicitation/RFP number from the data, or null>",
   "secondary_id": "<eMMA/BPM/Lot or other secondary reference from the data, or null>",
-  "procurement_officer": "<procurement/contracting officer name from the data, or null>",
-  "procurement_officer_contact": "<their email/phone from the data, or null>",
-  "prepared_for_address": "<agency mailing address from the data, or null>",
+  "procurement_officer": "<the AGENCY's procurement/contracting officer name, from the opportunity data or solicitation excerpt ONLY — this is someone who works for the client agency, never Bernedette Atong or anyone from FaithForge (FaithForge's own bio/contact info appears in your system instructions for writing the proposal, not as a source of agency facts). If the data's 'Contact Person' field is actually FaithForge's own founder or a FaithForge email/phone, treat it as missing and set this to null rather than repeating it.>",
+  "procurement_officer_contact": "<the AGENCY officer's email/phone from the data, or null — never info@faithforgetech.com, 410-862-2975, or any other FaithForge contact detail>",
+  "prepared_for_address": "<agency mailing address from the data, or null — never FaithForge's own address>",
   "submission_method": "<a SHORT concise phrase for how/where to submit, e.g. 'via eMMA', 'email to procurement@agency.gov', 'sealed hard copy to the address above' — distill this from the data, do not copy a full sentence/paragraph verbatim; null if not stated>",
   "due_datetime": "<full bid due date and time from the data, or null>",
   "evaluation_criteria": "<one-line summary of how proposals are scored, from the data, or null>",
@@ -93,7 +93,13 @@ Requirements:
 CRITICAL: Every numeric field must be a single final integer literal (e.g. 162000). NEVER write arithmetic expressions like "100 + 200". Do not include any total fields — totals are computed separately."""
 
 # ── Stage 2: Section writers — each expands the plan into rich, submission-ready prose ──
-HEADER_BRIEF_PROMPT = """Using the proposal PLAN and compliance data below, write the proposal title block and the INTERNAL DECISION BRIEF in markdown. Be specific and substantive.
+# The title block (solicitation #, procurement officer, submission method, etc.) is assembled
+# deterministically in Python by _render_title_block() instead of via LLM template-filling —
+# every value it needs already exists in the plan dict, and letting the model "fill in"
+# {{mustache}} placeholders proved unreliable (it has echoed the raw {{field}} syntax verbatim,
+# and separately misattributed FaithForge's own contact info as the agency's). This prompt now
+# only covers the parts of the header page that require actual judgment: the internal brief.
+HEADER_BRIEF_PROMPT = """Using the proposal PLAN and compliance data below, write the INTERNAL DECISION BRIEF in markdown. Be specific and substantive.
 
 ## PROPOSAL PLAN (JSON)
 {plan}
@@ -102,34 +108,7 @@ HEADER_BRIEF_PROMPT = """Using the proposal PLAN and compliance data below, writ
 {compliance}
 {custom_block}
 
-Output EXACTLY this markdown structure. The title block below mirrors FaithForge's real submitted proposals. For any {{field}} whose value in the plan is null/empty, do NOT print a fabricated value — instead print a "[NOTE TO BERNEDETTE: confirm <field> from the solicitation]" placeholder in that spot. Never invent a solicitation number, procurement officer, address, due date, or submission method.
-
-# REQUEST FOR PROPOSAL RESPONSE
-
-# {{title}}
-## {{subtitle}}
-
-[If the plan has a solicitation_number and/or secondary_id, print this line; otherwise print the NOTE placeholder:]
-**Solicitation # {{solicitation_number}}  |  {{secondary_id}}**
-
-**Prepared for**
-{{client_name}}
-[If prepared_for_address exists, print it on the next line; otherwise print "[NOTE TO BERNEDETTE: confirm prepared_for_address from the solicitation]"]
-[If procurement_officer exists, print: "Procurement Officer: {{procurement_officer}}  |  {{procurement_officer_contact}}" — and if procurement_officer_contact specifically is null, print "[NOTE TO BERNEDETTE: confirm procurement officer contact info]" in its place; otherwise (no procurement_officer at all) print "[NOTE TO BERNEDETTE: confirm procurement/contracting officer name and contact from the solicitation]"]
-
-**Submitted by**
-FaithForge Technologies & Consulting LLC
-Bernedette Atong, PMP, PgMP — Founder & Principal Consultant
-410-862-2975  |  info@faithforgetech.com  |  www.faithforgetech.com
-
-| Field | Response |
-|-------|----------|
-| Proposal Type | {{proposal_type}} |
-| Date | [today's date — print "[NOTE TO BERNEDETTE: confirm submission date]" if unsure] |
-| Bid Due | {{due_datetime}} |
-| Submission Method | {{submission_method}} |
-
----
+Output EXACTLY this markdown structure, starting directly with the heading below (no title block, no "Prepared for" section — those are handled separately):
 
 ## SECTION 0: INTERNAL DECISION BRIEF
 *FaithForge internal use only — remove this section before any external submission.*
@@ -541,6 +520,60 @@ def _openai_chat(client, system: str, user: str, max_tokens: int, retries: int =
     raise last_err
 
 
+def _note(field_label: str) -> str:
+    return f"[NOTE TO BERNEDETTE: confirm {field_label} from the solicitation]"
+
+
+def _render_title_block(plan: Dict[str, Any]) -> str:
+    """Build the proposal title block from the plan dict directly, in Python.
+    Every value here already exists in the plan after the planner stage — assembling
+    it deterministically avoids relying on the model to correctly fill in template
+    placeholders (it has echoed raw {{field}} syntax verbatim) or to keep FaithForge's
+    own contact info separate from the agency's."""
+    lines = ["# REQUEST FOR PROPOSAL RESPONSE", ""]
+    lines.append(f"# {plan.get('title') or 'Untitled Opportunity'}")
+    if plan.get("subtitle"):
+        lines.append(f"## {plan['subtitle']}")
+    lines.append("")
+
+    solicitation_number = plan.get("solicitation_number")
+    secondary_id = plan.get("secondary_id")
+    if solicitation_number or secondary_id:
+        parts = [f"Solicitation # {solicitation_number}" if solicitation_number else _note("the solicitation number")]
+        if secondary_id:
+            parts.append(secondary_id)
+        lines.append(f"**{'  |  '.join(parts)}**")
+    else:
+        lines.append(f"**{_note('the solicitation number')}**")
+    lines.append("")
+
+    lines.append("**Prepared for**")
+    lines.append(plan.get("client_name") or _note("the client/agency name"))
+    lines.append(plan.get("prepared_for_address") or _note("prepared_for_address"))
+    if plan.get("procurement_officer"):
+        contact = plan.get("procurement_officer_contact") or "[NOTE TO BERNEDETTE: confirm procurement officer contact info]"
+        lines.append(f"Procurement Officer: {plan['procurement_officer']}  |  {contact}")
+    else:
+        lines.append(_note("the procurement/contracting officer name and contact"))
+    lines.append("")
+
+    lines.append("**Submitted by**")
+    lines.append("FaithForge Technologies & Consulting LLC")
+    lines.append("Bernedette Atong, PMP, PgMP — Founder & Principal Consultant")
+    lines.append("410-862-2975  |  info@faithforgetech.com  |  www.faithforgetech.com")
+    lines.append("")
+
+    lines.append("| Field | Response |")
+    lines.append("|-------|----------|")
+    lines.append(f"| Proposal Type | {plan.get('proposal_type') or '—'} |")
+    lines.append(f"| Date | {datetime.now().strftime('%B %d, %Y')} |")
+    lines.append(f"| Bid Due | {plan.get('due_datetime') or _note('the bid due date')} |")
+    lines.append(f"| Submission Method | {plan.get('submission_method') or _note('the submission method')} |")
+    lines.append("")
+    lines.append("---")
+    return "\n".join(lines)
+
+
 def build_packet(
     opportunity: Dict[str, Any],
     document_texts: list[str],
@@ -630,6 +663,9 @@ def build_packet(
         else:
             logger.info("[packet] %s complete — %d chars", label, len(result))
         parts.append(result)
+
+    title_block = _render_title_block(plan)
+    parts[0] = f"{title_block}\n\n{parts[0]}" if parts[0] and parts[0].strip() else title_block
 
     non_empty = [p.strip() for p in parts if p and p.strip()]
     logger.info("[packet] all stages done in %.1fs — %d/%d sections have content",

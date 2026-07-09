@@ -13,6 +13,8 @@ The reference data below (registration numbers, insurance limits) is confirmed f
   - CAGE/NCAGE Code: **1ZWD3**
 - **DUNS Registration** (Dun & Bradstreet D-U-N-S number) — on file. DUNS: **144986962**.
 - **Maryland SDAT Acknowledgement Letter** (proof of good standing / filing acceptance) — on file.
+- **Certified Small Business (CSB) Certificate** (Maryland Certified Small Business, CSB, small business set-aside eligibility) — on file. CSB Number: **SB26-096796**.
+- **NAICS Codes** (industry classification codes for registration/vendor forms) — 541611, 541512, 541618, 541690, 561320.
 
 ## Insurance
 - **Certificate of Insurance** (COI, ACORD 25, general liability, professional liability / E&O) — on file. Carrier: Next Insurance US Company (NAIC 16285). Policy period 07/01/2026–07/01/2027.
@@ -46,6 +48,8 @@ For proposal cover sheets and vendor-registration forms:
 - **Principal Office:** 6865 Deerpath Rd, Suite 101, Elkridge, MD 21075-6255
 - **EIN:** 41-2788013
 - **UEI:** T1SWAWJXHWB1 | **CAGE:** 1ZWD3 | **DUNS:** 144986962
+- **CSB Number:** SB26-096796
+- **NAICS Codes:** 541611, 541512, 541618, 541690, 561320
 - **Phone:** 410-862-2975 | **Email:** info@faithforgetech.com | **Web:** www.faithforgetech.com
 
 ## Documents likely NOT yet on file (confirm — request if an RFP requires)

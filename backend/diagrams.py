@@ -112,25 +112,6 @@ def _arrow(draw, x0, y0, x1, y1, color=BORDER, width=3):
     draw.polygon([p1, (x1, y1), p2], fill=color)
 
 
-def _box_edge_point(cx: float, cy: float, half_w: float, half_h: float, dx: float, dy: float) -> Tuple[float, float]:
-    """Point where a ray from an axis-aligned box's center in direction
-    (dx, dy) exits through the box's boundary — used so connector lines
-    start/end at box edges instead of cutting through the box interior."""
-    if dx == 0 and dy == 0:
-        return cx, cy
-    scale = 1.0 / max(abs(dx) / half_w if half_w else 1e9, abs(dy) / half_h if half_h else 1e9)
-    return cx + dx * scale, cy + dy * scale
-
-
-def _connect_boxes(draw, x0, y0, half_w0, half_h0, x1, y1, half_w1, half_h1, color=BORDER, width=3):
-    """Draw an arrow between two box centers, clipped to start/end at each
-    box's edge rather than passing through their interiors/text."""
-    dx, dy = x1 - x0, y1 - y0
-    start = _box_edge_point(x0, y0, half_w0, half_h0, dx, dy)
-    end = _box_edge_point(x1, y1, half_w1, half_h1, -dx, -dy)
-    _arrow(draw, start[0], start[1], end[0], end[1], color=color, width=width)
-
-
 def _png_bytes(img: Image.Image) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -250,71 +231,104 @@ def default_org_chart(plan: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
 
 # ─── Tiered governance / stakeholder model (stacked layers) ─────────────────
 
-def tier_diagram(layers: List[Tuple[str, str]], title: str = "") -> bytes:
+def tier_diagram(layers: List[Tuple[str, List[str]]], title: str = "") -> bytes:
+    """Stacked authority/governance layers, each with a name and 3-6 short
+    bullet points (not a single sentence) — top layer has highest authority."""
     if not layers:
         return b""
     n = len(layers)
     width = 820
-    layer_h = 110
     gap = 22
     top = 70 if title else 20
-    height = top + n * (layer_h + gap) + 10
+    name_font = _font(17, bold=True)
+    bullet_font = _font(12, bold=False)
 
-    img = Image.new("RGB", (width, height), "white")
+    heights = []
+    for _, bullets in layers:
+        h = 40
+        for b in (bullets or [])[:6]:
+            wrapped = _wrap_px(f"-  {b}", bullet_font, width - 100)
+            h += (wrapped.count("\n") + 1) * 17 + 3
+        heights.append(max(h + 12, 90))
+
+    height = top + sum(heights) + gap * (n - 1) + 15
+
+    img = Image.new("RGB", (width, int(height)), "white")
     draw = ImageDraw.Draw(img)
     if title:
         _centered(draw, width / 2, 32, title, _font(22, bold=True), NAVY)
 
     shades = [NAVY, MID_BLUE, PALE_BLUE, GRAY_BLUE]
-    for i, (name, desc) in enumerate(layers):
-        y = top + i * (layer_h + gap)
+    y = top
+    for i, (name, bullets) in enumerate(layers):
+        h = heights[i]
         shade = shades[min(i, len(shades) - 1)]
         w = width - i * 45
         x = (width - w) / 2
-        draw.rounded_rectangle([x, y, x + w, y + layer_h], radius=8, fill=shade)
-        name_font = _font(17, bold=True)
-        desc_font = _font(13, bold=False)
-        _centered(draw, x + w / 2, y + layer_h * 0.34, _wrap_px(name, name_font, w - 40), name_font, "white")
-        _centered(draw, x + w / 2, y + layer_h * 0.72, _wrap_px(desc, desc_font, w - 40), desc_font, "#e9eef7")
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=8, fill=shade)
+        _centered(draw, x + w / 2, y + 22, _wrap_px(name, name_font, w - 50), name_font, "white")
+        by = y + 42
+        for b in (bullets or [])[:6]:
+            wrapped = _wrap_px(f"-  {b}", bullet_font, w - 90)
+            draw.multiline_text((x + 45, by), wrapped, font=bullet_font, fill="#e9eef7", spacing=3)
+            by += (wrapped.count("\n") + 1) * 17 + 3
         if i < n - 1:
-            _arrow(draw, width / 2, y + layer_h, width / 2, y + layer_h + gap, color=ORANGE, width=4)
+            _arrow(draw, width / 2, y + h, width / 2, y + h + gap, color=ORANGE, width=4)
+        y += h + gap
     return _png_bytes(img)
 
 
-# ─── Sequential flow / process diagram ──────────────────────────────────────
+# ─── Vertical drop-down methodology figure (Bernedette's preferred style) ────
+# Title bar, stacked rounded stage boxes, downward arrows, and a short bullet
+# list inside each stage — used for process/lifecycle figures (QA process,
+# risk escalation, communication cadence, project lifecycle).
 
-def flow_diagram(steps: List[str], title: str = "") -> bytes:
-    steps = [s for s in steps if s]
-    if not steps:
+def dropdown_diagram(stages: List[Tuple[str, List[str]]], title: str = "") -> bytes:
+    if not stages:
         return b""
-    n = len(steps)
-    box_w, box_h = 220, 100
-    gap = 45
-    cols = min(n, 4)
-    rows = (n + cols - 1) // cols
-    width = cols * box_w + (cols - 1) * gap + 60
-    top = 70 if title else 20
-    height = top + rows * (box_h + 70)
+    width = 760
+    title_bar_h = 60 if title else 0
+    box_w = width - 80
+    pad_x = (width - box_w) / 2
+    gap = 30
+    name_font = _font(16, bold=True)
+    bullet_font = _font(13, bold=False)
 
-    img = Image.new("RGB", (width, height), "white")
+    heights = []
+    for _, bullets in stages:
+        h = 46
+        for b in (bullets or [])[:6]:
+            wrapped = _wrap_px(f"-  {b}", bullet_font, box_w - 50)
+            h += (wrapped.count("\n") + 1) * 20 + 4
+        heights.append(max(h + 12, 70))
+
+    height = title_bar_h + 20 + sum(heights) + gap * (len(stages) - 1) + 20
+
+    img = Image.new("RGB", (width, int(height)), "white")
     draw = ImageDraw.Draw(img)
-    if title:
-        _centered(draw, width / 2, 32, title, _font(22, bold=True), NAVY)
 
-    prev = None
-    for idx, step in enumerate(steps):
-        r, c = divmod(idx, cols)
-        cc = c if r % 2 == 0 else (cols - 1 - c)
-        x = 30 + cc * (box_w + gap)
-        y = top + r * (box_h + 70)
-        fill = NAVY if idx == 0 else (ORANGE if idx == n - 1 else WHITE)
-        text_color = WHITE if idx in (0, n - 1) else DARK_TEXT
-        _box(draw, x, y, box_w, box_h, f"{idx + 1}. {step}", fill=fill, edge=NAVY,
-             text_color=text_color, size=14)
-        cx, cy = x + box_w / 2, y + box_h / 2
-        if prev:
-            _connect_boxes(draw, prev[0], prev[1], box_w / 2, box_h / 2, cx, cy, box_w / 2, box_h / 2)
-        prev = (cx, cy)
+    if title:
+        draw.rectangle([0, 0, width, title_bar_h], fill=NAVY)
+        _centered(draw, width / 2, title_bar_h / 2, title, _font(20, bold=True), "white")
+
+    y = title_bar_h + 20
+    prev_bottom = None
+    for i, (name, bullets) in enumerate(stages):
+        h = heights[i]
+        if prev_bottom is not None:
+            _arrow(draw, width / 2, prev_bottom, width / 2, y, color=ORANGE, width=4)
+        x = pad_x
+        fill = WHITE if i % 2 == 0 else LIGHT
+        draw.rounded_rectangle([x, y, x + box_w, y + h], radius=10, outline=NAVY, width=2, fill=fill)
+        _centered(draw, x + box_w / 2, y + 24, f"{i + 1}. {name}", name_font, NAVY)
+        by = y + 46
+        for b in (bullets or [])[:6]:
+            wrapped = _wrap_px(f"-  {b}", bullet_font, box_w - 50)
+            draw.multiline_text((x + 25, by), wrapped, font=bullet_font, fill=DARK_TEXT, spacing=4)
+            by += (wrapped.count("\n") + 1) * 20 + 4
+        prev_bottom = y + h
+        y += h + gap
+
     return _png_bytes(img)
 
 
@@ -541,39 +555,163 @@ def render_diagram(key: str, plan: Dict[str, Any]) -> bytes:
             return org_chart(entries)
         if key == "governance_framework":
             return tier_diagram([
-                (f"{client} Executive Sponsors", "Strategic direction, decision authority, executive oversight"),
-                ("FaithForge Principal Consultant / Program Director", "Program governance, executive advisory, escalation authority"),
-                ("FaithForge Project Manager & Workstream Leads", "Day-to-day execution oversight, deliverable quality, schedule control"),
-                ("Delivery & Support Team", "Task execution, reporting, documentation, stakeholder support"),
+                (f"{client} Executive Sponsors", [
+                    "Provide strategic direction and decision authority",
+                    "Approve major scope, schedule, or budget changes",
+                    "Serve as final escalation point for critical issues",
+                ]),
+                ("FaithForge Principal Consultant / Program Director", [
+                    "Own overall program governance and executive advisory",
+                    "Chair the steering committee and executive reporting",
+                    "Hold escalation authority for program-level risks",
+                ]),
+                ("FaithForge Project Manager & Workstream Leads", [
+                    "Manage day-to-day execution and deliverable quality",
+                    "Control schedule, scope, and resource allocation",
+                    "Coordinate across workstreams and dependencies",
+                ]),
+                ("Delivery & Support Team", [
+                    "Execute assigned tasks and produce deliverables",
+                    "Maintain documentation and status reporting",
+                    "Provide direct stakeholder support",
+                ]),
             ], title="Executive Governance & PMO Framework")
         if key == "qa_process":
-            return flow_diagram([
-                "Define Quality Standards & Acceptance Criteria", "Deliverable Produced",
-                "Internal QA Review", "Revisions (If Needed)", "Client/Stakeholder Review",
-                "Final Approval & Sign-Off", "Lessons Learned Captured",
+            return dropdown_diagram([
+                ("Define Quality Standards & Acceptance Criteria", [
+                    "Establish deliverable-specific quality criteria",
+                    "Align standards to solicitation requirements",
+                    "Assign quality ownership by workstream",
+                ]),
+                ("Deliverable Produced", [
+                    "Draft prepared against approved templates",
+                    "Internal consistency and completeness check",
+                    "Data and source validation",
+                ]),
+                ("Internal QA Review", [
+                    "Peer review by a non-author team member",
+                    "Checklist-based quality verification",
+                    "Findings logged and routed for correction",
+                ]),
+                ("Revisions (If Needed)", [
+                    "Author addresses reviewer findings",
+                    "Re-verification of corrected content",
+                    "Version control and change tracking",
+                ]),
+                ("Client/Stakeholder Review", [
+                    "Deliverable submitted for client feedback",
+                    "Feedback consolidated and triaged",
+                    "Response plan confirmed with client",
+                ]),
+                ("Final Approval & Sign-Off", [
+                    "Formal client acceptance obtained",
+                    "Deliverable baselined and archived",
+                    "Acceptance recorded in the project log",
+                ]),
+                ("Lessons Learned Captured", [
+                    "Review outcomes documented",
+                    "Process improvements identified",
+                    "Updates applied to QA templates",
+                ]),
             ], title="Quality Assurance Process")
         if key == "risk_escalation":
-            return flow_diagram([
-                "Risk/Issue Identified", "Logged in RAID Register", "Severity Triaged",
-                "Resolved at PM Level (Low/Medium)", "Escalated to Program Director (High/Critical)",
-                "Executive Sponsor Briefed", "Resolution Tracked to Closure",
+            return dropdown_diagram([
+                ("Risk/Issue Identified", [
+                    "Identified by any team member or stakeholder",
+                    "Initial description and context captured",
+                    "Reported to the Project Manager",
+                ]),
+                ("Logged in RAID Register", [
+                    "Entry created with category and description",
+                    "Owner and target resolution date set",
+                    "Initial severity assigned",
+                ]),
+                ("Severity Triaged", [
+                    "Likelihood and impact assessed",
+                    "Priority level assigned (Low/Medium/High/Critical)",
+                    "Response strategy selected",
+                ]),
+                ("Resolved at PM Level (Low/Medium)", [
+                    "Mitigation actions assigned and tracked",
+                    "Progress monitored in weekly status",
+                    "Resolution confirmed and closed",
+                ]),
+                ("Escalated to Program Director (High/Critical)", [
+                    "Executive briefing prepared",
+                    "Options and recommendations presented",
+                    "Decision and direction documented",
+                ]),
+                ("Executive Sponsor Briefed", [
+                    "Client executive informed of risk/issue",
+                    "Impact to schedule, scope, or budget reviewed",
+                    "Joint resolution path agreed",
+                ]),
+                ("Resolution Tracked to Closure", [
+                    "Corrective actions verified complete",
+                    "RAID register updated and closed",
+                    "Lessons captured for future risk planning",
+                ]),
             ], title="Risk & Issue Escalation Workflow")
         if key == "communication_framework":
-            return flow_diagram([
-                "Weekly Status (PM & Client Team)", "Bi-Weekly Steering Committee",
-                "Monthly Executive Briefing", "Ad Hoc Issue Escalation", "Quarterly Governance Review",
+            return dropdown_diagram([
+                ("Weekly Status (PM & Client Team)", [
+                    "Progress against schedule and deliverables",
+                    "Open risks, issues, and action items",
+                    "Upcoming milestones and dependencies",
+                ]),
+                ("Bi-Weekly Steering Committee", [
+                    "Cross-functional alignment on priorities",
+                    "Decision points requiring committee input",
+                    "Resource and scope adjustments reviewed",
+                ]),
+                ("Monthly Executive Briefing", [
+                    "High-level program health summary",
+                    "KPI and performance dashboard review",
+                    "Strategic risks and escalations",
+                ]),
+                ("Ad Hoc Issue Escalation", [
+                    "Triggered by urgent risks or blockers",
+                    "Direct notification to the accountable owner",
+                    "Resolution tracked outside the standard cadence",
+                ]),
+                ("Quarterly Governance Review", [
+                    "Program performance against baseline",
+                    "Governance framework effectiveness review",
+                    "Strategic direction and priorities confirmed",
+                ]),
             ], title="Communication Framework & Cadence")
         if key == "stakeholder_engagement":
             return tier_diagram([
-                ("Executive Sponsors & Decision-Makers", "Strategic alignment, funding, go/no-go decisions"),
-                ("Program & Department Leadership", "Operational direction, resource commitment"),
-                ("Operational Stakeholders & End Users", "Day-to-day input, adoption, feedback"),
-                ("External Partners & Oversight Bodies", "Regulatory, oversight, and partner coordination"),
+                ("Executive Sponsors & Decision-Makers", [
+                    "Set strategic direction and priorities",
+                    "Approve funding and major decisions",
+                    "Champion the initiative across the organization",
+                ]),
+                ("Program & Department Leadership", [
+                    "Provide operational direction and resource commitment",
+                    "Coordinate departmental participation",
+                    "Resolve cross-functional conflicts",
+                ]),
+                ("Operational Stakeholders & End Users", [
+                    "Provide day-to-day input and subject matter expertise",
+                    "Participate in workshops and requirements sessions",
+                    "Adopt new processes, tools, and workflows",
+                ]),
+                ("External Partners & Oversight Bodies", [
+                    "Coordinate regulatory and compliance requirements",
+                    "Participate in oversight reviews",
+                    "Provide external validation and audit support",
+                ]),
             ], title="Stakeholder Engagement Model")
         if key == "project_lifecycle":
-            names = [w.get("name", "Phase") for w in (plan.get("workstreams") or [])]
-            names = names or ["Mobilization", "Planning", "Execution", "Change & Adoption", "Closeout"]
-            return flow_diagram(names, title="Project Lifecycle")
+            workstreams = plan.get("workstreams") or []
+            if workstreams:
+                stages = [(w.get("name", "Phase"),
+                          [w["objective"]] if w.get("objective") else []) for w in workstreams]
+            else:
+                stages = [(n, []) for n in
+                          ["Mobilization", "Planning", "Execution", "Change & Adoption", "Closeout"]]
+            return dropdown_diagram(stages, title="Project Lifecycle")
         if key == "raci_matrix":
             return default_raci(plan)
         if key == "gantt_chart":

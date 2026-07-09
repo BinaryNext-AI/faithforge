@@ -14,6 +14,11 @@ FaithForge Technologies & Consulting operates as a strategic execution and opera
 - Email: info@faithforgetech.com
 - Social: @FaithforgeTech
 
+# Registration Identifiers
+- Certified Small Business (CSB) Number: SB26-096796
+- NAICS Codes: 541611 (Administrative Management Consulting), 541512 (Computer Systems Design), 541618 (Other Management Consulting), 541690 (Technical Consulting), 561320 (Temporary Help / Staff Augmentation)
+- See standing_documents knowledge for UEI, CAGE, DUNS, and EIN.
+
 # Core Capabilities (from Capability Statement)
 - **PMO Leadership** — Program & Project Management, Portfolio Governance, RAID Management, Reporting & Performance Oversight
 - **Enterprise Transformation** — ERP Modernization, SaaS/COTS Implementations, Digital Strategy & Solution Delivery

@@ -180,9 +180,9 @@ Output EXACTLY this markdown, starting with the heading below:
 ## SECTION 3: COMPLIANCE MATRIX
 [One sentence introducing the matrix as a roadmap for the evaluator.]
 
-| RFP Requirement | Addressed In | Status |
-|------------------|--------------|--------|
-[One row per distinct requirement drawn from the Required Forms, Submission Checklist, Required Qualifications, Evaluation Criteria, Insurance, Certifications, and Compliance fields above. "Addressed In" = the section number + title from the Table of Contents above that covers it (e.g. "7 — Corporate Qualifications"). "Status" = "Included in this volume" for anything the narrative itself covers, or "Provided under separate cover" for signed forms/certificates attached separately rather than written into the narrative. Include 12-20 rows and do not omit anything substantive in the compliance data.]
+| Solicitation Requirement | Proposal Location |
+|---------------------------|--------------------|
+[One row per distinct requirement drawn from the Required Forms, Submission Checklist, Required Qualifications, Evaluation Criteria, Insurance, Certifications, and Compliance fields above. Keep the requirement label concise — a short phrase, not a restated paragraph. "Proposal Location" = the exact section number + title from the Table of Contents above that addresses it (e.g. "7 — Corporate Qualifications"), or "Provided under separate cover" for a signed form/certificate/attachment that isn't written into the narrative at all. EXACTLY two columns — do not add a third column (no "Status", no response-summary text, no restating how the requirement is met). Include 12-20 rows and do not omit anything substantive in the compliance data. Do not repeat the same requirement twice.]
 
 Output only the markdown."""
 
@@ -324,7 +324,7 @@ Output this structure:
 [IF the plan's "min_qualifications_required" is true, FIRST output a "### 7.0 Minimum Qualifications Narrative" subsection: an intro sentence affirming FaithForge meets the solicitation's minimum qualifications, then address EXACTLY the qualification criteria quoted in plan.minimum_qualifications_text (do not invent additional criteria beyond what is quoted there) using ONLY real knowledge-base facts. Where a qualification needs a specific fact not in the knowledge base, insert a "[NOTE TO BERNEDETTE: ...]" placeholder rather than a fabricated claim. If min_qualifications_required is false, skip this subsection entirely.]
 
 ### 7.1 Company Registration & Certifications
-[A short intro sentence, then a table using ONLY the registration facts present in the knowledge base's Standing Documents (legal name, UEI, CAGE code, DUNS number, SAM.gov registration status/expiration, EIN, minority-owned business status):]
+[A short intro sentence, then a table using ONLY the registration facts present in the knowledge base's Standing Documents (legal name, UEI, CAGE code, DUNS number, SAM.gov registration status/expiration, EIN, Certified Small Business number, NAICS codes, minority-owned business status):]
 | Item | Value |
 |------|-------|
 | Legal Name | <from knowledge base> |
@@ -333,8 +333,10 @@ Output this structure:
 | DUNS Number | <from knowledge base> |
 | SAM.gov Registration | <status and expiration from knowledge base> |
 | EIN | <from knowledge base> |
+| Certified Small Business (CSB) Number | <from knowledge base> |
+| NAICS Codes | <from knowledge base — list all codes> |
 | Business Certification | <minority-owned status from knowledge base> |
-[If the solicitation or additional instructions reference a state/local small-business certification (e.g. a Certified Small Business / MBE / SBR number) that is NOT present in the knowledge base, add one more row: "| <the certification type named> | [NOTE TO BERNEDETTE: insert the certification number] |" — never fabricate a number.]
+[If the solicitation or additional instructions reference any OTHER registration/certification (e.g. MBE, DBE, a state-specific set-aside number) that is NOT present in the knowledge base, add one more row: "| <the certification type named> | [NOTE TO BERNEDETTE: insert the certification number] |" — never fabricate a number.]
 
 ### 7.2 {domain_hint} & Program Governance Experience
 [2-3 paragraphs. Open with FaithForge's identity: a governance and execution partner that installs structure, governance, and execution discipline where complexity and accountability intersect. Reference the 4-Tier engagement model. Then a bullet list of 5-6 relevant experience areas specific to this domain.]
@@ -500,7 +502,7 @@ Output EXACTLY this markdown, starting with the heading below:
 ## SECTION 16: REQUIRED ATTACHMENTS AND CERTIFICATIONS
 [1-sentence intro.]
 
-[One "- [ ]" checklist line per required form/attachment/certification found in the Required Forms, Submission Checklist, Required Attachments, Certifications Required, and Insurance fields above. Append " — on file, attach directly" to any item that matches something FaithForge already holds per the knowledge base's Standing Documents (SAM.gov/UEI/CAGE registration, DUNS, W-9, EIN, Articles of Organization, Certificate of Insurance, PMP/PgMP certificates, minority-owned business status, past performance references, rate card). Leave unmarked anything that must be newly prepared, signed, or tailored specifically for this solicitation.]
+[One "- [ ]" checklist line per required form/attachment/certification found in the Required Forms, Submission Checklist, Required Attachments, Certifications Required, and Insurance fields above. Append " — on file, attach directly" to any item that matches something FaithForge already holds per the knowledge base's Standing Documents (SAM.gov/UEI/CAGE registration, DUNS, Certified Small Business certificate, W-9, EIN, Articles of Organization, Certificate of Insurance, PMP/PgMP certificates, minority-owned business status, past performance references, rate card). Leave unmarked anything that must be newly prepared, signed, or tailored specifically for this solicitation.]
 
 Output only the markdown. Do not invent a requirement not present in the compliance data above."""
 

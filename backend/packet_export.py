@@ -26,6 +26,12 @@ def _parse_blocks(markdown: str) -> List[Tuple]:
             i += 1
             continue
 
+        diagram_match = re.match(r"^\[\[DIAGRAM:(\w+)\]\]$", s)
+        if diagram_match:
+            i += 1
+            blocks.append(("diagram", diagram_match.group(1)))
+            continue
+
         if s.startswith("|") and i + 1 < len(lines) and _is_table_sep(lines[i + 1]):
             header = _table_cells(s)
             i += 2
@@ -100,7 +106,8 @@ def _strip_bold(text: str) -> str:
 
 # ─── DOCX export ─────────────────────────────────────────────────────────────
 
-def markdown_to_docx_bytes(markdown: str, title: str = "FaithForge Proposal", client_name: Optional[str] = None) -> bytes:
+def markdown_to_docx_bytes(markdown: str, title: str = "FaithForge Proposal", client_name: Optional[str] = None,
+                            plan: Optional[dict] = None) -> bytes:
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -216,6 +223,17 @@ def markdown_to_docx_bytes(markdown: str, title: str = "FaithForge Proposal", cl
         elif kind == "p":
             p = doc.add_paragraph()
             add_inline_runs(p, block[1])
+        elif kind == "diagram":
+            if plan:
+                try:
+                    from diagrams import render_diagram
+                    png = render_diagram(block[1], plan)
+                    if png:
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p.add_run().add_picture(io.BytesIO(png), width=Inches(6.2))
+                except Exception:
+                    pass
         # blank: paragraph spacing already provides separation
 
     buf = io.BytesIO()
@@ -334,7 +352,29 @@ def _draw_cover_page(pdf, title: str, client_name: Optional[str] = None) -> None
     )
 
 
-def markdown_to_pdf_bytes(markdown: str, title: str = "FaithForge Proposal", client_name: Optional[str] = None) -> bytes:
+def _place_diagram_pdf(pdf, key: str, plan: dict, usable_width: float) -> None:
+    """Render and embed a diagram image at the current cursor position,
+    page-breaking first if it wouldn't fit on the remaining page."""
+    from diagrams import render_diagram
+    png = render_diagram(key, plan)
+    if not png:
+        return
+    try:
+        from PIL import Image
+        iw, ih = Image.open(io.BytesIO(png)).size
+    except Exception:
+        return
+    display_w = usable_width
+    display_h = display_w * ih / iw
+    if pdf.get_y() + display_h > pdf.h - pdf.b_margin:
+        pdf.add_page()
+    y0 = pdf.get_y()
+    pdf.image(io.BytesIO(png), x=pdf.l_margin, y=y0, w=display_w)
+    pdf.set_xy(pdf.l_margin, y0 + display_h + 3)
+
+
+def markdown_to_pdf_bytes(markdown: str, title: str = "FaithForge Proposal", client_name: Optional[str] = None,
+                           plan: Optional[dict] = None) -> bytes:
     from fpdf import FPDF
     from fpdf.fonts import FontFace
 
@@ -436,6 +476,9 @@ def markdown_to_pdf_bytes(markdown: str, title: str = "FaithForge Proposal", cli
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(*black)
             pdf.multi_cell(0, 5.5, _fpdf_markdown(block[1]), markdown=True)
+        elif kind == "diagram":
+            if plan:
+                _place_diagram_pdf(pdf, block[1], plan, usable_width)
         elif kind == "blank":
             pdf.ln(2)
 

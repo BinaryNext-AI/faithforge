@@ -25,6 +25,7 @@ DEFAULT_KB_FILES = [
     "rate_card",
     "boilerplate",
     "target_market",
+    "standing_documents",
 ]
 
 

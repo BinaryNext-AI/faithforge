@@ -1,7 +1,9 @@
 """Convert packet markdown content to a PDF using fpdf2 — FaithForge branded."""
 
+import io
 import re
 import json
+from typing import Optional
 from fpdf import FPDF
 
 L_MARGIN = 18
@@ -145,7 +147,32 @@ def _is_table_separator(s: str) -> bool:
     return all(set(c.strip()) <= set("-: ") and "-" in c for c in body.split("|"))
 
 
-def markdown_to_pdf(markdown_text: str, output_path: str, footer_label: str = "FaithForge Proposal") -> str:
+_DIAGRAM_LINE_RE = re.compile(r'^\[\[DIAGRAM:(\w+)\]\]$')
+
+
+def _place_diagram(pdf, key: str, plan: dict) -> None:
+    """Render and embed a diagram image at the current cursor position,
+    page-breaking first if it wouldn't fit on the remaining page."""
+    from diagrams import render_diagram
+    png = render_diagram(key, plan)
+    if not png:
+        return
+    try:
+        from PIL import Image
+        iw, ih = Image.open(io.BytesIO(png)).size
+    except Exception:
+        return
+    display_w = CONTENT_W
+    display_h = display_w * ih / iw
+    if pdf.get_y() + display_h > pdf.h - 20:
+        pdf.add_page()
+    y0 = pdf.get_y()
+    pdf.image(io.BytesIO(png), x=L_MARGIN, y=y0, w=display_w)
+    pdf.set_xy(L_MARGIN, y0 + display_h + 3)
+
+
+def markdown_to_pdf(markdown_text: str, output_path: str, footer_label: str = "FaithForge Proposal",
+                     plan: Optional[dict] = None) -> str:
     pdf = PacketPDF()
     pdf.footer_label = footer_label
     pdf.set_auto_page_break(auto=True, margin=18)
@@ -158,6 +185,14 @@ def markdown_to_pdf(markdown_text: str, output_path: str, footer_label: str = "F
     while i < len(lines):
         line = lines[i]
         s = line.strip()
+
+        # ── Diagram sentinel ──────────────────────────────────────────────────
+        diagram_match = _DIAGRAM_LINE_RE.match(s)
+        if diagram_match:
+            i += 1
+            if plan:
+                _place_diagram(pdf, diagram_match.group(1), plan)
+            continue
 
         # ── Markdown table ────────────────────────────────────────────────────
         if s.startswith("|") and i + 1 < len(lines) and _is_table_separator(lines[i + 1]):
@@ -322,4 +357,5 @@ def packet_to_pdf(content_json: str, output_path: str) -> str:
     # Extract opportunity title for the footer (e.g. "AMI Program Management Services Proposal")
     opp_title = plan.get("title", "") if isinstance(plan, dict) else ""
     footer_label = f"{opp_title} Proposal" if opp_title else "FaithForge Proposal"
-    return markdown_to_pdf(markdown_text, output_path, footer_label=footer_label)
+    return markdown_to_pdf(markdown_text, output_path, footer_label=footer_label,
+                            plan=plan if isinstance(plan, dict) else None)

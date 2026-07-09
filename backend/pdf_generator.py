@@ -152,22 +152,23 @@ _DIAGRAM_LINE_RE = re.compile(r'^\[\[DIAGRAM:(\w+)\]\]$')
 
 def _place_diagram(pdf, key: str, plan: dict) -> None:
     """Render and embed a diagram image at the current cursor position,
-    page-breaking first if it wouldn't fit on the remaining page."""
-    from diagrams import render_diagram
+    page-breaking first if it wouldn't fit on the remaining page. Sized at
+    its natural resolution (capped to the page) rather than always stretched
+    to full content width, so small diagrams aren't blown up."""
+    from diagrams import render_diagram, png_size, fit_size_mm
     png = render_diagram(key, plan)
     if not png:
         return
     try:
-        from PIL import Image
-        iw, ih = Image.open(io.BytesIO(png)).size
+        iw, ih = png_size(png)
     except Exception:
         return
-    display_w = CONTENT_W
-    display_h = display_w * ih / iw
+    display_w, display_h = fit_size_mm(iw, ih, CONTENT_W, 170.0)
     if pdf.get_y() + display_h > pdf.h - 20:
         pdf.add_page()
     y0 = pdf.get_y()
-    pdf.image(io.BytesIO(png), x=L_MARGIN, y=y0, w=display_w)
+    x0 = L_MARGIN + (CONTENT_W - display_w) / 2
+    pdf.image(io.BytesIO(png), x=x0, y=y0, w=display_w, h=display_h)
     pdf.set_xy(L_MARGIN, y0 + display_h + 3)
 
 

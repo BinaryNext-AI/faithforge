@@ -226,12 +226,14 @@ def markdown_to_docx_bytes(markdown: str, title: str = "FaithForge Proposal", cl
         elif kind == "diagram":
             if plan:
                 try:
-                    from diagrams import render_diagram
+                    from diagrams import render_diagram, png_size, fit_size_in
                     png = render_diagram(block[1], plan)
                     if png:
+                        iw, ih = png_size(png)
+                        display_w, _ = fit_size_in(iw, ih, 6.2, 9.0)
                         p = doc.add_paragraph()
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        p.add_run().add_picture(io.BytesIO(png), width=Inches(6.2))
+                        p.add_run().add_picture(io.BytesIO(png), width=Inches(display_w))
                 except Exception:
                     pass
         # blank: paragraph spacing already provides separation
@@ -354,22 +356,23 @@ def _draw_cover_page(pdf, title: str, client_name: Optional[str] = None) -> None
 
 def _place_diagram_pdf(pdf, key: str, plan: dict, usable_width: float) -> None:
     """Render and embed a diagram image at the current cursor position,
-    page-breaking first if it wouldn't fit on the remaining page."""
-    from diagrams import render_diagram
+    page-breaking first if it wouldn't fit on the remaining page. Sized at
+    its natural resolution (capped to the page) rather than always stretched
+    to full content width, so small diagrams aren't blown up."""
+    from diagrams import render_diagram, png_size, fit_size_mm
     png = render_diagram(key, plan)
     if not png:
         return
     try:
-        from PIL import Image
-        iw, ih = Image.open(io.BytesIO(png)).size
+        iw, ih = png_size(png)
     except Exception:
         return
-    display_w = usable_width
-    display_h = display_w * ih / iw
+    display_w, display_h = fit_size_mm(iw, ih, usable_width, 200.0)
     if pdf.get_y() + display_h > pdf.h - pdf.b_margin:
         pdf.add_page()
     y0 = pdf.get_y()
-    pdf.image(io.BytesIO(png), x=pdf.l_margin, y=y0, w=display_w)
+    x0 = pdf.l_margin + (usable_width - display_w) / 2
+    pdf.image(io.BytesIO(png), x=x0, y=y0, w=display_w, h=display_h)
     pdf.set_xy(pdf.l_margin, y0 + display_h + 3)
 
 

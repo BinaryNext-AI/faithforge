@@ -1,20 +1,22 @@
 """Programmatic diagram generation for FaithForge proposals.
 
-Renders PNG images (matplotlib, headless) that replace `[[DIAGRAM:key]]`
-markdown sentinel lines in the exported HTML preview, DOCX, and PDF outputs.
-Every diagram is built deterministically from the proposal `plan` dict — no
-LLM ever draws a diagram or invents the data inside one, so nothing here can
-fabricate a fact that isn't already in the plan.
+Renders PNG images that replace `[[DIAGRAM:key]]` markdown sentinel lines in
+the exported HTML preview, DOCX, and PDF outputs. Every diagram is built
+deterministically from the proposal `plan` dict — no LLM ever draws a
+diagram or invents the data inside one, so nothing here can fabricate a
+fact that isn't already in the plan.
+
+Pillow-only by design: matplotlib (plus its numpy dependency) is too heavy
+for the 512MB memory ceiling on the hosting platform and caused production
+out-of-memory crashes during packet builds. Pillow is already a mandatory
+transitive dependency of fpdf2, so this adds no new deployed weight.
 """
 import io
+import math
 import re
-import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle
+from PIL import Image, ImageDraw, ImageFont
 
 NAVY = "#1e3a8a"
 ORANGE = "#c2652a"
@@ -27,60 +29,148 @@ MID_BLUE = "#2d4e7a"
 PALE_BLUE = "#5b7aa8"
 GRAY_BLUE = "#94a3b8"
 
-FIG_DPI = 170
-
 _DIAGRAM_RE = re.compile(r'^\[\[DIAGRAM:(\w+)\]\]$')
 
+# ── Font loading (cached; falls back gracefully across OS/containers) ───────
+_FONT_CACHE: Dict[Tuple[int, bool], Any] = {}
+_BOLD_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+]
+_REGULAR_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+]
 
-def _new_fig(width: float, height: float):
-    fig, ax = plt.subplots(figsize=(width, height), dpi=FIG_DPI)
-    ax.set_xlim(0, width)
-    ax.set_ylim(0, height)
-    ax.axis("off")
-    ax.invert_yaxis()  # (0,0) at top-left so layout code reads top-to-bottom
-    return fig, ax
+
+def _font(size: int, bold: bool = False):
+    key = (size, bold)
+    cached = _FONT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    font = None
+    for path in (_BOLD_PATHS if bold else _REGULAR_PATHS):
+        try:
+            font = ImageFont.truetype(path, size)
+            break
+        except Exception:
+            continue
+    if font is None:
+        try:
+            font = ImageFont.load_default(size=size)
+        except TypeError:
+            font = ImageFont.load_default()
+    _FONT_CACHE[key] = font
+    return font
 
 
-def _wrap_to_width(text: str, width_in: float, fontsize: float, bold: bool = True) -> str:
-    """Manually wrap text to fit a box of `width_in` inches — matplotlib's own
-    `wrap=True` wraps to the *axes* width, not the containing box, so a long
-    label in a narrow box renders as one unwrapped line that overflows past
-    the box (and gets clipped at the figure edge by the fixed data xlim)."""
+_MEASURE_IMG = Image.new("RGB", (1, 1))
+_MEASURE_DRAW = ImageDraw.Draw(_MEASURE_IMG)
+
+
+def _wrap_px(text: str, font, max_width: float) -> str:
+    """Greedy word-wrap measured in actual rendered pixels."""
     if not text:
         return text
-    chars_per_in = 6.6 if bold else 7.6
-    chars_per_line = max(int(width_in * chars_per_in * (9.0 / fontsize)), 8)
-    return "\n".join(textwrap.wrap(text, chars_per_line, break_long_words=False)) or text
+    words = text.split()
+    lines: List[str] = []
+    cur = ""
+    for w in words:
+        trial = f"{cur} {w}".strip()
+        if _MEASURE_DRAW.textlength(trial, font=font) <= max_width or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return "\n".join(lines)
 
 
-def _box(ax, x, y, w, h, text, *, fill=WHITE, edge=NAVY, text_color=DARK_TEXT,
-         fontsize=8.5, subtext=None, sub_color=SLATE):
-    ax.add_patch(FancyBboxPatch(
-        (x, y), w, h, boxstyle="round,pad=0.02,rounding_size=0.08",
-        linewidth=1.3, edgecolor=edge, facecolor=fill,
-    ))
-    wrapped_text = _wrap_to_width(text, w - 0.15, fontsize, bold=True)
-    if subtext:
-        wrapped_sub = _wrap_to_width(subtext, w - 0.15, fontsize - 1.5, bold=False)
-        ax.text(x + w / 2, y + h * 0.36, wrapped_text, ha="center", va="center",
-                 fontsize=fontsize, fontweight="bold", color=text_color)
-        ax.text(x + w / 2, y + h * 0.74, wrapped_sub, ha="center", va="center",
-                 fontsize=fontsize - 1.5, color=sub_color)
-    else:
-        ax.text(x + w / 2, y + h / 2, wrapped_text, ha="center", va="center",
-                 fontsize=fontsize, fontweight="bold", color=text_color)
+def _text_width(text: str, font) -> float:
+    return _MEASURE_DRAW.textlength(text, font=font)
 
 
-def _arrow(ax, x0, y0, x1, y1, color=BORDER):
-    ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>", mutation_scale=13,
-                                  linewidth=1.4, color=color, shrinkA=2, shrinkB=2))
+def _centered(draw, cx, cy, text, font, fill):
+    draw.multiline_text((cx, cy), text, font=font, fill=fill, anchor="mm", align="center", spacing=4)
 
 
-def _finish(fig) -> bytes:
+def _right_aligned(draw, x, y, text, font, fill):
+    draw.multiline_text((x, y), text, font=font, fill=fill, anchor="rm", align="right", spacing=4)
+
+
+def _arrow(draw, x0, y0, x1, y1, color=BORDER, width=3):
+    draw.line([(x0, y0), (x1, y1)], fill=color, width=width)
+    ang = math.atan2(y1 - y0, x1 - x0)
+    size = 9
+    p1 = (x1 - size * math.cos(ang - 0.5), y1 - size * math.sin(ang - 0.5))
+    p2 = (x1 - size * math.cos(ang + 0.5), y1 - size * math.sin(ang + 0.5))
+    draw.polygon([p1, (x1, y1), p2], fill=color)
+
+
+def _box_edge_point(cx: float, cy: float, half_w: float, half_h: float, dx: float, dy: float) -> Tuple[float, float]:
+    """Point where a ray from an axis-aligned box's center in direction
+    (dx, dy) exits through the box's boundary — used so connector lines
+    start/end at box edges instead of cutting through the box interior."""
+    if dx == 0 and dy == 0:
+        return cx, cy
+    scale = 1.0 / max(abs(dx) / half_w if half_w else 1e9, abs(dy) / half_h if half_h else 1e9)
+    return cx + dx * scale, cy + dy * scale
+
+
+def _connect_boxes(draw, x0, y0, half_w0, half_h0, x1, y1, half_w1, half_h1, color=BORDER, width=3):
+    """Draw an arrow between two box centers, clipped to start/end at each
+    box's edge rather than passing through their interiors/text."""
+    dx, dy = x1 - x0, y1 - y0
+    start = _box_edge_point(x0, y0, half_w0, half_h0, dx, dy)
+    end = _box_edge_point(x1, y1, half_w1, half_h1, -dx, -dy)
+    _arrow(draw, start[0], start[1], end[0], end[1], color=color, width=width)
+
+
+def _png_bytes(img: Image.Image) -> bytes:
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white")
-    plt.close(fig)
+    img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def png_size(png_bytes: bytes) -> Tuple[int, int]:
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        return img.size
+
+
+def fit_size_mm(iw: int, ih: int, max_w_mm: float, max_h_mm: float, dpi: float = 150.0) -> Tuple[float, float]:
+    """Natural display size for a rendered diagram (assuming `dpi` pixels per
+    inch), capped to max_w_mm x max_h_mm — scaled down only, never up, so a
+    small diagram isn't stretched to fill the full page width."""
+    natural_w = (iw / dpi) * 25.4
+    natural_h = (ih / dpi) * 25.4
+    scale = min(1.0, max_w_mm / natural_w, max_h_mm / natural_h)
+    return natural_w * scale, natural_h * scale
+
+
+def fit_size_in(iw: int, ih: int, max_w_in: float, max_h_in: float, dpi: float = 150.0) -> Tuple[float, float]:
+    natural_w = iw / dpi
+    natural_h = ih / dpi
+    scale = min(1.0, max_w_in / natural_w, max_h_in / natural_h)
+    return natural_w * scale, natural_h * scale
+
+
+def _box(draw, x, y, w, h, text, *, fill=WHITE, edge=NAVY, text_color=DARK_TEXT,
+         size=20, subtext=None, sub_color=SLATE):
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=10, fill=fill, outline=edge, width=2)
+    title_font = _font(size, bold=True)
+    wrapped_title = _wrap_px(text, title_font, w - 20)
+    if subtext:
+        sub_font = _font(max(size - 3, 9), bold=False)
+        wrapped_sub = _wrap_px(subtext, sub_font, w - 20)
+        _centered(draw, x + w / 2, y + h * 0.38, wrapped_title, title_font, text_color)
+        _centered(draw, x + w / 2, y + h * 0.74, wrapped_sub, sub_font, sub_color)
+    else:
+        _centered(draw, x + w / 2, y + h / 2, wrapped_title, title_font, text_color)
 
 
 # ─── Organization chart ──────────────────────────────────────────────────────
@@ -108,13 +198,16 @@ def org_chart(entries: List[Dict[str, Optional[str]]]) -> bytes:
         frontier = nxt
 
     max_width = max(len(l) for l in levels)
-    longest_role = max((len(e.get("role", "")) for e in entries), default=10)
-    box_w = max(2.5, min(4.0, longest_role * 0.075 + 0.9))
-    box_h, gap_x, gap_y = 1.05, 0.45, 0.6
-    width = max_width * (box_w + gap_x) + gap_x
-    height = len(levels) * (box_h + gap_y) + gap_y
+    title_font = _font(20, bold=True)
+    longest_role_px = max((_text_width(e.get("role", ""), title_font) for e in entries), default=160)
+    box_w = int(max(240, min(420, longest_role_px + 40)))
+    box_h, gap_x, gap_y = 100, 40, 55
+    width = int(max_width * (box_w + gap_x) + gap_x)
+    height = int(len(levels) * (box_h + gap_y) + gap_y)
 
-    fig, ax = _new_fig(width, height)
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+
     anchors = {}  # role -> (center_x, top_y, bottom_y)
     for li, level in enumerate(levels):
         n = len(level)
@@ -126,7 +219,7 @@ def org_chart(entries: List[Dict[str, Optional[str]]]) -> bytes:
             fill = NAVY if li == 0 else WHITE
             text_color = WHITE if li == 0 else DARK_TEXT
             sub_color = "#dbe4f5" if li == 0 else SLATE
-            _box(ax, x, y, box_w, box_h, e["role"], subtext=e.get("name") or "[TO BE NAMED]",
+            _box(draw, x, y, box_w, box_h, e["role"], subtext=e.get("name") or "[TO BE NAMED]",
                  fill=fill, edge=NAVY, text_color=text_color, sub_color=sub_color)
             anchors[e["role"]] = (x + box_w / 2, y, y + box_h)
 
@@ -135,9 +228,9 @@ def org_chart(entries: List[Dict[str, Optional[str]]]) -> bytes:
         if parent and parent in anchors and e["role"] in anchors:
             pcx, _, pby = anchors[parent]
             ccx, cty, _ = anchors[e["role"]]
-            _arrow(ax, pcx, pby, ccx, cty)
+            _arrow(draw, pcx, pby, ccx, cty)
 
-    return _finish(fig)
+    return _png_bytes(img)
 
 
 def default_org_chart(plan: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
@@ -161,31 +254,31 @@ def tier_diagram(layers: List[Tuple[str, str]], title: str = "") -> bytes:
     if not layers:
         return b""
     n = len(layers)
-    width = 8.2
-    layer_h = 1.0
-    gap = 0.22
-    top = 0.7 if title else 0.25
-    height = top + n * (layer_h + gap) + 0.15
+    width = 820
+    layer_h = 110
+    gap = 22
+    top = 70 if title else 20
+    height = top + n * (layer_h + gap) + 10
 
-    fig, ax = _new_fig(width, height)
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
     if title:
-        ax.text(width / 2, 0.32, title, ha="center", va="center", fontsize=11.5,
-                 fontweight="bold", color=NAVY)
+        _centered(draw, width / 2, 32, title, _font(22, bold=True), NAVY)
+
     shades = [NAVY, MID_BLUE, PALE_BLUE, GRAY_BLUE]
     for i, (name, desc) in enumerate(layers):
         y = top + i * (layer_h + gap)
         shade = shades[min(i, len(shades) - 1)]
-        w = width - i * 0.5
+        w = width - i * 45
         x = (width - w) / 2
-        ax.add_patch(FancyBboxPatch((x, y), w, layer_h, boxstyle="round,pad=0.015,rounding_size=0.06",
-                                     facecolor=shade, edgecolor="white", linewidth=1.2))
-        ax.text(x + w / 2, y + layer_h * 0.34, _wrap_to_width(name, w - 0.3, 9),
-                 ha="center", va="center", fontsize=9, fontweight="bold", color="white")
-        ax.text(x + w / 2, y + layer_h * 0.72, _wrap_to_width(desc, w - 0.3, 7.2, bold=False),
-                 ha="center", va="center", fontsize=7.2, color="#e9eef7")
+        draw.rounded_rectangle([x, y, x + w, y + layer_h], radius=8, fill=shade)
+        name_font = _font(17, bold=True)
+        desc_font = _font(13, bold=False)
+        _centered(draw, x + w / 2, y + layer_h * 0.34, _wrap_px(name, name_font, w - 40), name_font, "white")
+        _centered(draw, x + w / 2, y + layer_h * 0.72, _wrap_px(desc, desc_font, w - 40), desc_font, "#e9eef7")
         if i < n - 1:
-            _arrow(ax, width / 2, y + layer_h, width / 2, y + layer_h + gap, color=ORANGE)
-    return _finish(fig)
+            _arrow(draw, width / 2, y + layer_h, width / 2, y + layer_h + gap, color=ORANGE, width=4)
+    return _png_bytes(img)
 
 
 # ─── Sequential flow / process diagram ──────────────────────────────────────
@@ -195,34 +288,34 @@ def flow_diagram(steps: List[str], title: str = "") -> bytes:
     if not steps:
         return b""
     n = len(steps)
-    box_w, box_h = 2.3, 1.05
-    gap = 0.5
+    box_w, box_h = 220, 100
+    gap = 45
     cols = min(n, 4)
     rows = (n + cols - 1) // cols
-    width = cols * box_w + (cols - 1) * gap + 0.8
-    top = 0.75 if title else 0.25
-    height = top + rows * (box_h + 0.8)
+    width = cols * box_w + (cols - 1) * gap + 60
+    top = 70 if title else 20
+    height = top + rows * (box_h + 70)
 
-    fig, ax = _new_fig(width, height)
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
     if title:
-        ax.text(width / 2, 0.32, title, ha="center", va="center", fontsize=11.5,
-                 fontweight="bold", color=NAVY)
+        _centered(draw, width / 2, 32, title, _font(22, bold=True), NAVY)
 
     prev = None
     for idx, step in enumerate(steps):
         r, c = divmod(idx, cols)
         cc = c if r % 2 == 0 else (cols - 1 - c)
-        x = 0.4 + cc * (box_w + gap)
-        y = top + r * (box_h + 0.8)
+        x = 30 + cc * (box_w + gap)
+        y = top + r * (box_h + 70)
         fill = NAVY if idx == 0 else (ORANGE if idx == n - 1 else WHITE)
         text_color = WHITE if idx in (0, n - 1) else DARK_TEXT
-        _box(ax, x, y, box_w, box_h, f"{idx + 1}. {step}", fill=fill, edge=NAVY,
-             text_color=text_color, fontsize=8)
+        _box(draw, x, y, box_w, box_h, f"{idx + 1}. {step}", fill=fill, edge=NAVY,
+             text_color=text_color, size=14)
         cx, cy = x + box_w / 2, y + box_h / 2
         if prev:
-            _arrow(ax, prev[0], prev[1], cx, cy)
+            _connect_boxes(draw, prev[0], prev[1], box_w / 2, box_h / 2, cx, cy, box_w / 2, box_h / 2)
         prev = (cx, cy)
-    return _finish(fig)
+    return _png_bytes(img)
 
 
 # ─── RACI matrix ─────────────────────────────────────────────────────────────
@@ -235,43 +328,44 @@ def raci_matrix(workstreams: List[str], roles: List[str],
     workstreams = workstreams or []
     if not workstreams or not roles:
         return b""
-    label_w = 3.0
-    cell_w, cell_h = 1.7, 0.65
+    label_w = 260
+    cell_w, cell_h = 150, 65
     ncols_data = len(roles)
     width = label_w + ncols_data * cell_w
-    height = 0.6 + (len(workstreams) + 1) * cell_h + 0.35
+    height = 60 + (len(workstreams) + 1) * cell_h + 35
 
-    fig, ax = _new_fig(width, height)
-    ax.text(width / 2, 0.3, title, ha="center", va="center", fontsize=11, fontweight="bold", color=NAVY)
-    top = 0.6
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+    _centered(draw, width / 2, 26, title, _font(20, bold=True), NAVY)
+    top = 55
 
-    ax.add_patch(Rectangle((0, top), label_w, cell_h, facecolor=NAVY, edgecolor="white"))
-    ax.text(label_w / 2, top + cell_h / 2, "Workstream", ha="center", va="center",
-            color="white", fontsize=8, fontweight="bold")
+    draw.rectangle([0, top, label_w, top + cell_h], fill=NAVY, outline="white")
+    _centered(draw, label_w / 2, top + cell_h / 2, "Workstream", _font(15, bold=True), "white")
+    role_font = _font(13, bold=True)
     for j, role in enumerate(roles):
         x = label_w + j * cell_w
-        ax.add_patch(Rectangle((x, top), cell_w, cell_h, facecolor=NAVY, edgecolor="white"))
-        ax.text(x + cell_w / 2, top + cell_h / 2, _wrap_to_width(role, cell_w - 0.15, 7),
-                ha="center", va="center", color="white", fontsize=7, fontweight="bold")
+        draw.rectangle([x, top, x + cell_w, top + cell_h], fill=NAVY, outline="white")
+        _centered(draw, x + cell_w / 2, top + cell_h / 2, _wrap_px(role, role_font, cell_w - 16),
+                  role_font, "white")
 
+    ws_font = _font(13, bold=False)
+    raci_font = _font(19, bold=True)
     for i, ws in enumerate(workstreams):
         y = top + cell_h * (i + 1)
         fill = LIGHT if i % 2 == 0 else "white"
-        ax.add_patch(Rectangle((0, y), label_w, cell_h, facecolor=fill, edgecolor=BORDER))
-        ax.text(label_w / 2, y + cell_h / 2, _wrap_to_width(ws, label_w - 0.2, 7.3, bold=False),
-                ha="center", va="center", fontsize=7.3, color=DARK_TEXT)
+        draw.rectangle([0, y, label_w, y + cell_h], fill=fill, outline=BORDER)
+        _centered(draw, label_w / 2, y + cell_h / 2, _wrap_px(ws, ws_font, label_w - 24), ws_font, DARK_TEXT)
         for j in range(ncols_data):
             x = label_w + j * cell_w
-            ax.add_patch(Rectangle((x, y), cell_w, cell_h, facecolor=fill, edgecolor=BORDER))
+            draw.rectangle([x, y, x + cell_w, y + cell_h], fill=fill, outline=BORDER)
             code = assignments.get((i, j), "")
             if code:
-                ax.text(x + cell_w / 2, y + cell_h / 2, code, ha="center", va="center",
-                        fontsize=10.5, fontweight="bold", color=_RACI_COLORS.get(code, DARK_TEXT))
+                _centered(draw, x + cell_w / 2, y + cell_h / 2, code, raci_font,
+                          _RACI_COLORS.get(code, DARK_TEXT))
 
-    legend_y = height - 0.12
-    ax.text(0, legend_y, "R = Responsible    A = Accountable    C = Consulted    I = Informed",
-            fontsize=7.3, color=SLATE)
-    return _finish(fig)
+    draw.text((10, height - 18), "R = Responsible    A = Accountable    C = Consulted    I = Informed",
+              font=_font(13, bold=False), fill=SLATE, anchor="lm")
+    return _png_bytes(img)
 
 
 def default_raci(plan: Dict[str, Any]) -> bytes:
@@ -315,32 +409,35 @@ def gantt_chart(schedule: List[Dict[str, Any]], title: str = "High-Level Program
         parsed.append((row.get("phase") or "Phase", start, end))
 
     n = len(parsed)
-    bar_h, row_gap, left_pad = 0.6, 0.35, 4.4
-    width = left_pad + max_month * 0.5 + 1.0
-    top = 0.75
-    height = top + n * (bar_h + row_gap) + 0.5
+    bar_h, row_gap, left_pad = 45, 25, 300
+    width = int(left_pad + max_month * 35 + 60)
+    top = 65
+    height = int(top + n * (bar_h + row_gap) + 30)
 
-    fig, ax = _new_fig(width, height)
-    ax.text(width / 2, 0.32, title, ha="center", va="center", fontsize=11.5, fontweight="bold", color=NAVY)
-    scale = (width - left_pad - 0.6) / max_month
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+    _centered(draw, width / 2, 28, title, _font(20, bold=True), NAVY)
+    scale = (width - left_pad - 40) / max_month
 
-    for m in range(0, max_month + 1, max(1, max_month // 8)):
+    tick_font = _font(11, bold=False)
+    step = max(1, max_month // 8)
+    for m in range(0, max_month + 1, step):
         x = left_pad + m * scale
-        ax.plot([x, x], [top - 0.1, height - 0.15], color=BORDER, linewidth=0.6, zorder=0)
-        ax.text(x, top - 0.18, f"M{m}", ha="center", va="bottom", fontsize=6.5, color=SLATE)
+        draw.line([(x, top - 8), (x, height - 15)], fill=BORDER, width=1)
+        draw.text((x, top - 12), f"M{m}", font=tick_font, fill=SLATE, anchor="mb")
 
+    phase_font = _font(14, bold=False)
+    bar_font = _font(13, bold=True)
     for i, (phase, start, end) in enumerate(parsed):
-        y = top + 0.15 + i * (bar_h + row_gap)
-        ax.text(0, y + bar_h / 2, _wrap_to_width(phase, left_pad - 0.2, 8, bold=False),
-                ha="left", va="center", fontsize=8, color=DARK_TEXT)
+        y = top + 10 + i * (bar_h + row_gap)
+        _right_aligned(draw, left_pad - 15, y + bar_h / 2, _wrap_px(phase, phase_font, left_pad - 30),
+                       phase_font, DARK_TEXT)
         x0 = left_pad + start * scale
-        bw = max((end - start) * scale, 0.15)
+        bw = max((end - start) * scale, 10)
         color = NAVY if i % 2 == 0 else ORANGE
-        ax.add_patch(FancyBboxPatch((x0, y), bw, bar_h, boxstyle="round,pad=0.01,rounding_size=0.05",
-                                     facecolor=color, edgecolor="none"))
-        ax.text(x0 + bw / 2, y + bar_h / 2, f"M{start}-{end}", ha="center", va="center",
-                fontsize=7, color="white", fontweight="bold")
-    return _finish(fig)
+        draw.rounded_rectangle([x0, y, x0 + bw, y + bar_h], radius=6, fill=color)
+        _centered(draw, x0 + bw / 2, y + bar_h / 2, f"M{start}-{end}", bar_font, "white")
+    return _png_bytes(img)
 
 
 # ─── Executive dashboard mockup ──────────────────────────────────────────────
@@ -368,74 +465,67 @@ def executive_dashboard(plan: Dict[str, Any], title: str = "Program Delivery Ove
             (f"{len(schedule)}", "Delivery Phases"),
         ]
 
-    width, height = 10.5, 5.2
-    fig = plt.figure(figsize=(width, height), dpi=FIG_DPI)
-    ax_title = fig.add_axes((0, 0.92, 1, 0.08))
-    ax_title.axis("off")
-    ax_title.text(0.5, 0.4, title, ha="center", va="center", fontsize=13, fontweight="bold",
-                  color=NAVY, transform=ax_title.transAxes)
+    width, height = 1050, 520
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+    _centered(draw, width / 2, 30, title, _font(24, bold=True), NAVY)
 
     n_tiles = len(tiles)
-    tile_w = 1 / n_tiles
+    tile_gap = 14
+    tile_w = (width - tile_gap * (n_tiles + 1)) / n_tiles
+    tile_top, tile_h = 65, 110
+    value_font = _font(26, bold=True)
+    label_font = _font(13, bold=False)
     for i, (value, label) in enumerate(tiles):
-        ax = fig.add_axes((i * tile_w + 0.012, 0.68, tile_w - 0.024, 0.2))
-        ax.axis("off")
-        ax.add_patch(Rectangle((0, 0), 1, 1, transform=ax.transAxes, facecolor=LIGHT,
-                                edgecolor=BORDER, linewidth=1))
-        ax.text(0.5, 0.62, value, ha="center", va="center", fontsize=15, fontweight="bold",
-                color=NAVY, transform=ax.transAxes)
-        tile_w_in = (tile_w - 0.024) * width
-        ax.text(0.5, 0.22, _wrap_to_width(label, tile_w_in - 0.15, 7.3, bold=False),
-                ha="center", va="center", fontsize=7.3, color=SLATE, transform=ax.transAxes)
+        x = tile_gap + i * (tile_w + tile_gap)
+        draw.rounded_rectangle([x, tile_top, x + tile_w, tile_top + tile_h], radius=6,
+                               fill=LIGHT, outline=BORDER)
+        _centered(draw, x + tile_w / 2, tile_top + tile_h * 0.4, value, value_font, NAVY)
+        _centered(draw, x + tile_w / 2, tile_top + tile_h * 0.75,
+                  _wrap_px(label, label_font, tile_w - 16), label_font, SLATE)
 
-    left_frac = 0.3
-    ax_chart = fig.add_axes((left_frac, 0.08, 0.98 - left_frac, 0.52))
-    label_width_in = left_frac * width - 0.2
+    chart_top = tile_top + tile_h + 40
+    chart_left = 280
+    chart_right = width - 60
+    chart_bottom = height - 50
+    chart_w = chart_right - chart_left
 
-    def _wrap_labels(names: List[str]) -> List[str]:
-        return [_wrap_to_width(n, label_width_in, 7.5, bold=False) for n in names]
+    names_font = _font(13, bold=False)
+    bar_label_font = _font(12, bold=False)
+    axis_font = _font(11, bold=False)
 
+    values: List[Tuple[str, float, str]] = []
+    max_val = 1.0
+    axis_label = ""
     if show_pricing and plan.get("workstream_costs"):
-        ws = plan["workstream_costs"]
-        names = [w.get("workstream", "") for w in ws]
-        costs = [w.get("cost", 0) for w in ws]
-        y_pos = list(range(len(names)))
-        ax_chart.barh(y_pos, costs, color=NAVY, height=0.55)
-        ax_chart.set_yticks(y_pos)
-        ax_chart.set_yticklabels(_wrap_labels(names), fontsize=7.5, color=DARK_TEXT)
-        ax_chart.invert_yaxis()
-        ax_chart.set_xlabel("Estimated Cost by Workstream ($)", fontsize=8, color=SLATE)
-        for i, v in enumerate(costs):
-            ax_chart.text(v, i, f" ${v:,.0f}", va="center", fontsize=7, color=DARK_TEXT)
+        rows = plan["workstream_costs"]
+        max_val = max((r.get("cost", 0) for r in rows), default=1) or 1
+        axis_label = "Estimated Cost by Workstream ($)"
+        values = [(r.get("workstream", ""), r.get("cost", 0), f"${r.get('cost', 0):,.0f}") for r in rows]
     elif schedule:
-        names = [s.get("phase", "") for s in schedule]
-        pct = []
         for s in schedule:
             m = re.search(r"(\d+)", str(s.get("completion", "")))
-            pct.append(int(m.group(1)) if m else 0)
-        y_pos = list(range(len(names)))
-        ax_chart.barh(y_pos, pct, color=NAVY, height=0.55)
-        ax_chart.set_yticks(y_pos)
-        ax_chart.set_yticklabels(_wrap_labels(names), fontsize=7.5, color=DARK_TEXT)
-        ax_chart.invert_yaxis()
-        ax_chart.set_xlim(0, 100)
-        ax_chart.set_xlabel("Planned Completion by Phase (%)", fontsize=8, color=SLATE)
-        for i, v in enumerate(pct):
-            ax_chart.text(v, i, f" {v}%", va="center", fontsize=7, color=DARK_TEXT)
-    else:
-        ax_chart.axis("off")
+            pct = int(m.group(1)) if m else 0
+            values.append((s.get("phase", ""), pct, f"{pct}%"))
+        max_val = 100
+        axis_label = "Planned Completion by Phase (%)"
 
-    if schedule or (show_pricing and plan.get("workstream_costs")):
-        for spine in ("top", "right"):
-            ax_chart.spines[spine].set_visible(False)
-        ax_chart.spines["left"].set_color(BORDER)
-        ax_chart.spines["bottom"].set_color(BORDER)
-        ax_chart.tick_params(axis="x", labelsize=7, colors=SLATE)
+    if values:
+        n_rows = len(values)
+        row_h = (chart_bottom - chart_top) / n_rows
+        bar_h = min(row_h * 0.55, 40)
+        draw.line([(chart_left, chart_top - 5), (chart_left, chart_bottom)], fill=BORDER, width=1)
+        for i, (name, val, label) in enumerate(values):
+            y = chart_top + i * row_h + (row_h - bar_h) / 2
+            _right_aligned(draw, chart_left - 10, y + bar_h / 2, _wrap_px(name, names_font, chart_left - 30),
+                          names_font, DARK_TEXT)
+            bw = (val / max_val) * chart_w if max_val else 0
+            draw.rectangle([chart_left, y, chart_left + bw, y + bar_h], fill=NAVY)
+            draw.text((chart_left + bw + 6, y + bar_h / 2), label, font=bar_label_font, fill=DARK_TEXT, anchor="lm")
+        draw.line([(chart_left, chart_bottom), (chart_right, chart_bottom)], fill=BORDER, width=1)
+        _centered(draw, (chart_left + chart_right) / 2, chart_bottom + 22, axis_label, axis_font, SLATE)
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor="white")
-    plt.close(fig)
-    return buf.getvalue()
+    return _png_bytes(img)
 
 
 # ─── Dispatch ─────────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ and guessing first.last@company.com is explicitly forbidden.
 """
 import csv
 import io
+import json
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -221,12 +222,16 @@ def _build_lead(row: Dict[str, str], mapping: Dict[str, Optional[str]]) -> Dict[
     lead["priority_rank"] = None
     note_parts: List[str] = []
     linkedin_url = ""
+    custom: Dict[str, str] = {}
 
     for header, value in row.items():
         if not value:
             continue
         field = mapping.get(header)
         if field is None:
+            # Column doesn't match any known field — keep it instead of
+            # dropping it, so nothing from the sheet is silently lost.
+            custom[header] = value
             continue
 
         if field == "priority_rank":
@@ -266,6 +271,7 @@ def _build_lead(row: Dict[str, str], mapping: Dict[str, Optional[str]]) -> Dict[
 
     lead["notes"] = "\n".join(note_parts)
     lead["has_email"] = bool(lead.get("contact_email"))
+    lead["custom_fields"] = custom
     return lead
 
 
@@ -332,6 +338,8 @@ def preview(content: bytes, filename: str, db: Session) -> Dict[str, Any]:
         if not lead["has_email"]:
             email_missing += 1
 
+    unmapped_columns = [h for h, f in mapping.items() if f is None and h.strip()]
+
     return {
         "columns": headers,
         "mapping": mapping,
@@ -339,6 +347,7 @@ def preview(content: bytes, filename: str, db: Session) -> Dict[str, Any]:
         "row_count": len(rows),
         "duplicate_count": duplicate_count,
         "email_missing_count": email_missing,
+        "unmapped_columns": unmapped_columns,
     }
 
 
@@ -371,6 +380,17 @@ def commit(rows: List[Dict[str, Any]], source_filename: str, db: Session,
                     existing.priority_score = lead["priority_score"]
                 if lead.get("notes"):
                     existing.notes = f"{existing.notes}\n{lead['notes']}" if existing.notes else lead["notes"]
+                if lead.get("custom_fields"):
+                    merged = {}
+                    if existing.custom_fields:
+                        try:
+                            merged = json.loads(existing.custom_fields)
+                        except (ValueError, TypeError):
+                            merged = {}
+                    for k, v in lead["custom_fields"].items():
+                        if v and not merged.get(k):
+                            merged[k] = v
+                    existing.custom_fields = json.dumps(merged) if merged else existing.custom_fields
                 existing.updated_at = datetime.utcnow()
                 updated += 1
             else:
@@ -393,6 +413,7 @@ def commit(rows: List[Dict[str, Any]], source_filename: str, db: Session,
             entry_offer=lead.get("entry_offer") or None,
             notes=lead.get("notes") or None,
             source=f"bulk_upload:{source_filename}",
+            custom_fields=json.dumps(lead["custom_fields"]) if lead.get("custom_fields") else None,
         )
         db.add(acc)
         db.flush()  # assign acc.id without a full commit

@@ -183,6 +183,7 @@ class AccountBase(BaseModel):
     notes: Optional[str] = None
     source: Optional[str] = None
     do_not_contact: Optional[bool] = None
+    custom_fields: Optional[str] = None  # JSON string of {"Header": "value"} — spreadsheet columns with no fixed field, or user-added ones
 
 
 class AccountCreate(AccountBase):
@@ -247,6 +248,7 @@ class OutreachImportPreviewOut(BaseModel):
     row_count: int
     duplicate_count: int
     email_missing_count: int
+    unmapped_columns: List[str] = []
 
 
 class OutreachImportCommitRequest(BaseModel):

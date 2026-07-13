@@ -280,6 +280,13 @@ function ImportAccountsModal({ onClose, onImported }) {
                     </div>
                   </div>
 
+                  {preview.unmapped_columns && preview.unmapped_columns.length > 0 && (
+                    <p className="text-xs text-gray-400">
+                      Columns not recognized as a standard field — kept as custom fields on each lead
+                      (view/edit them from the account page): <span className="text-gray-600">{preview.unmapped_columns.join(', ')}</span>
+                    </p>
+                  )}
+
                   <div className="border border-gray-200 rounded-xl overflow-x-auto max-h-56 overflow-y-auto">
                     <table className="w-full text-xs">
                       <thead className="bg-gray-50 sticky top-0">

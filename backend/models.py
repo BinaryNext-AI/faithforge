@@ -234,6 +234,11 @@ class Account(Base):
     # Opt-out: once true, no outreach email will ever be sent to this account
     do_not_contact = Column(Boolean, default=False)
 
+    # Arbitrary extra columns from an imported spreadsheet that don't map to a
+    # fixed field above, plus anything added by hand on the Account page.
+    # Stored as a JSON string: {"Some Header": "value", ...}.
+    custom_fields = Column(Text)
+
     outreach_emails = relationship("OutreachEmail", back_populates="account", cascade="all, delete-orphan")
 
 

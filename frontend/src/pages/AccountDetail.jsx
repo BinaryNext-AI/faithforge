@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail, Ban,
+  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail, Ban, Plus, X,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getAccount, updateAccount, updateAccountStage, deleteAccount, scoreAccount } from '../api'
@@ -18,6 +18,7 @@ export default function AccountDetail() {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(null)
   const [toast, setToast] = useState(null)
+  const [customFields, setCustomFields] = useState([])   // [{key, value}]
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -45,6 +46,11 @@ export default function AccountDetail() {
         notes: data.notes || '',
         source: data.source || '',
       })
+      let parsed = {}
+      if (data.custom_fields) {
+        try { parsed = JSON.parse(data.custom_fields) } catch { parsed = {} }
+      }
+      setCustomFields(Object.entries(parsed).map(([key, value]) => ({ key, value })))
       setError(null)
     } catch (e) { setError(e.message) }
     finally { setLoading(false) }
@@ -62,12 +68,19 @@ export default function AccountDetail() {
     try {
       const payload = { ...form }
       payload.next_action_date = form.next_action_date ? new Date(form.next_action_date).toISOString() : null
+      const fieldsObj = {}
+      customFields.forEach(({ key, value }) => { if (key.trim()) fieldsObj[key.trim()] = value })
+      payload.custom_fields = Object.keys(fieldsObj).length ? JSON.stringify(fieldsObj) : null
       const updated = await updateAccount(id, payload)
       setAcc(updated)
       showToast('Account saved')
     } catch (e) { showToast(e.message, 'error') }
     finally { setBusy(null) }
   }
+
+  const addCustomField = () => setCustomFields(f => [...f, { key: '', value: '' }])
+  const updateCustomField = (i, patch) => setCustomFields(f => f.map((cf, idx) => idx === i ? { ...cf, ...patch } : cf))
+  const removeCustomField = (i) => setCustomFields(f => f.filter((_, idx) => idx !== i))
 
   const changeStage = async (stage) => {
     setBusy('stage')
@@ -250,6 +263,42 @@ export default function AccountDetail() {
         <Labeled label="Pain Points"><textarea value={form.pain_points} onChange={set('pain_points')} className="input min-h-16" rows={2} /></Labeled>
         <Labeled label="Entry Offer"><textarea value={form.entry_offer} onChange={set('entry_offer')} className="input min-h-16" rows={2} /></Labeled>
         <Labeled label="Notes"><textarea value={form.notes} onChange={set('notes')} className="input min-h-20" rows={3} /></Labeled>
+      </div>
+
+      {/* Custom fields — anything from an imported spreadsheet that didn't map to a
+          fixed field above, plus anything added by hand here. */}
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Custom Fields</p>
+          <button onClick={addCustomField} className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+            <Plus className="w-3.5 h-3.5" />Add Field
+          </button>
+        </div>
+        {customFields.length === 0 ? (
+          <p className="text-sm text-gray-400">No custom fields. Imported spreadsheet columns that don't match a standard field (Company, Email, etc.) land here automatically — or add your own.</p>
+        ) : (
+          <div className="space-y-2">
+            {customFields.map((cf, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <input
+                  value={cf.key}
+                  onChange={e => updateCustomField(i, { key: e.target.value })}
+                  className="input text-sm w-48 shrink-0"
+                  placeholder="Field name"
+                />
+                <input
+                  value={cf.value}
+                  onChange={e => updateCustomField(i, { value: e.target.value })}
+                  className="input text-sm flex-1"
+                  placeholder="Value"
+                />
+                <button onClick={() => removeCustomField(i)} className="text-gray-400 hover:text-red-600 shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Save */}

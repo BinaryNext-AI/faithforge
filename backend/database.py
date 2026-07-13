@@ -76,6 +76,7 @@ def _migrate_add_columns():
     # Columns added after initial deploy — needed on both SQLite and Postgres.
     with engine.connect() as conn:
         _ensure_column(conn, "accounts", "do_not_contact", "BOOLEAN DEFAULT FALSE")
+        _ensure_column(conn, "accounts", "custom_fields", "TEXT")
         _ensure_column(conn, "outreach_emails", "is_follow_up", "BOOLEAN DEFAULT FALSE")
         _ensure_column(conn, "outreach_emails", "was_dry_run", "BOOLEAN DEFAULT FALSE")
         conn.commit()

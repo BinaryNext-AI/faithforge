@@ -356,6 +356,25 @@ def generate_cold_email(
     result = extract_json(raw)
     if not result or "emails" not in result:
         return {"emails": []}
+
+    # The model reliably includes send_day/purpose for email 1 (shown in the
+    # prompt's example) but sometimes drops them for emails 2+ — backfill from
+    # the fixed cadence defined in COLD_EMAIL_PROMPT's own rules rather than
+    # trust the model to repeat them correctly every time.
+    step_defaults = {
+        1: (0, "Initial outreach"),
+        2: (5, "Follow-up"),
+        3: (12, "Final value-add"),
+        4: (21, "Check-in"),
+        5: (30, "Check-in"),
+    }
+    for email in result.get("emails") or []:
+        step = email.get("step")
+        default_day, default_purpose = step_defaults.get(step, (7 * max(int(step or 1) - 1, 0), "Follow-up"))
+        if email.get("send_day") is None:
+            email["send_day"] = default_day
+        if not email.get("purpose"):
+            email["purpose"] = default_purpose
     return result
 
 

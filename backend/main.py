@@ -93,7 +93,31 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_db()
+    _load_persisted_settings()
     logger.info("FaithForge AI Contract Screener started.")
+
+
+def _load_persisted_settings():
+    """Settings saved via PUT /api/settings only live-patch the running
+    process's memory — on a restart (redeploy, free-tier spin-down/up,
+    crash) that patch is gone and the app silently falls back to whatever
+    is in the environment/.env file. Re-apply every persisted override from
+    the database on every boot so a saved setting (e.g. OUTREACH_SEND_MODE
+    = live) actually survives a restart instead of reverting to the code
+    default."""
+    from database import SessionLocal as _SessionLocal
+    db = _SessionLocal()
+    try:
+        for setting in db.query(AppSetting).all():
+            if setting.value and hasattr(settings, setting.key):
+                try:
+                    object.__setattr__(settings, setting.key, setting.value)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("Could not load persisted settings on startup: %s", e)
+    finally:
+        db.close()
 
 
 def log_action(db: Session, action: str, opportunity_id: Optional[int] = None, details: str = None):

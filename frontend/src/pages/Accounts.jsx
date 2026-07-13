@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Search, SlidersHorizontal, ChevronRight, Loader2, AlertCircle,
-  Building2, Plus, X, Clock, Bell,
+  Building2, Plus, X, Clock, Bell, Upload, FileSpreadsheet, Link as LinkIcon, Users, CheckCircle2,
 } from 'lucide-react'
-import { getAccounts, createAccount } from '../api'
+import {
+  getAccounts, createAccount,
+  outreachPreviewFile, outreachPreviewGoogleSheet, outreachCommitImport,
+} from '../api'
 
 export const STAGES = [
   'Not Contacted', 'Contacted', 'Replied', 'Meeting Scheduled',
@@ -133,6 +136,202 @@ function AddAccountModal({ onClose, onCreated }) {
   )
 }
 
+function ImportAccountsModal({ onClose, onImported }) {
+  const [uploadMode, setUploadMode] = useState('file') // 'file' | 'sheet'
+  const [sheetUrl, setSheetUrl] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [sourceFilename, setSourceFilename] = useState('leads.xlsx')
+  const [dedupe, setDedupe] = useState('skip')
+  const [committing, setCommitting] = useState(false)
+  const [error, setError] = useState(null)
+  const [result, setResult] = useState(null)
+  const fileInputRef = useRef(null)
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setSourceFilename(file.name)
+    setPreviewLoading(true)
+    setError(null)
+    setPreview(null)
+    try {
+      const r = await outreachPreviewFile(file)
+      setPreview(r)
+    } catch (err) { setError(err.message) }
+    finally { setPreviewLoading(false) }
+  }
+
+  const handleSheetPreview = async () => {
+    if (!sheetUrl.trim()) return
+    setPreviewLoading(true)
+    setError(null)
+    setSourceFilename('google_sheet.csv')
+    try {
+      const r = await outreachPreviewGoogleSheet(sheetUrl.trim())
+      setPreview(r)
+    } catch (err) { setError(err.message) }
+    finally { setPreviewLoading(false) }
+  }
+
+  const handleCommit = async () => {
+    if (!preview) return
+    setCommitting(true)
+    setError(null)
+    try {
+      const r = await outreachCommitImport(preview.rows, sourceFilename, dedupe)
+      setResult(r)
+    } catch (err) { setError(err.message) }
+    finally { setCommitting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-bold text-gray-900">Upload a Leads Spreadsheet</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {result ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                Added {result.created} new account{result.created !== 1 ? 's' : ''}
+                {result.updated > 0 && `, updated ${result.updated}`}
+                {result.skipped > 0 && `, skipped ${result.skipped} duplicate${result.skipped !== 1 ? 's' : ''}`}.
+              </div>
+              <div className="flex justify-end">
+                <button onClick={() => onImported()} className="btn-primary text-sm py-2 px-5">Done</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500">
+                Upload an .xlsx, .xls, or .csv file of leads — or paste a public Google Sheet link.
+                Each row becomes a new Account in your pipeline. Want AI to draft cold emails for these
+                leads too? Use the <strong>Outreach</strong> page's Bulk Upload tab instead — it imports the
+                same way and then generates emails.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setUploadMode('file')}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold ${uploadMode === 'file' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 inline mr-1.5" />Upload File
+                </button>
+                <button
+                  onClick={() => setUploadMode('sheet')}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold ${uploadMode === 'sheet' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  <LinkIcon className="w-4 h-4 inline mr-1.5" />Google Sheet Link
+                </button>
+              </div>
+
+              {uploadMode === 'file' ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors"
+                >
+                  <Upload className="w-7 h-7 mx-auto mb-2 text-gray-400" />
+                  <p className="text-sm text-gray-600">Click to upload an .xlsx, .xls, or .csv leads file</p>
+                  <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileChange} className="hidden" />
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={sheetUrl}
+                    onChange={e => setSheetUrl(e.target.value)}
+                    className="input flex-1"
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                  />
+                  <button onClick={handleSheetPreview} disabled={previewLoading || !sheetUrl.trim()} className="btn-primary text-sm px-4">
+                    Preview
+                  </button>
+                </div>
+              )}
+
+              {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  <AlertCircle className="w-4 h-4 shrink-0" />{error}
+                </div>
+              )}
+
+              {previewLoading && (
+                <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-blue-600" /></div>
+              )}
+
+              {preview && !previewLoading && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-lg p-3 text-center">
+                      <p className="text-2xl font-bold text-gray-900">{preview.row_count}</p>
+                      <p className="text-xs text-gray-500">Leads found</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-lg p-3 text-center">
+                      <p className="text-2xl font-bold text-amber-700">{preview.duplicate_count}</p>
+                      <p className="text-xs text-amber-600">Possible duplicates</p>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-3 text-center">
+                      <p className="text-2xl font-bold text-red-600">{preview.email_missing_count}</p>
+                      <p className="text-xs text-red-500">Missing email</p>
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-xl overflow-x-auto max-h-56 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500">Company</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500">Contact</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500">Email</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500">Flags</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {preview.rows.map((r, i) => (
+                          <tr key={i}>
+                            <td className="px-3 py-2 font-medium text-gray-800">{r.company_name}</td>
+                            <td className="px-3 py-2 text-gray-600">{r.contact_name}</td>
+                            <td className="px-3 py-2 text-gray-500">
+                              {r.has_email ? r.contact_email : <span className="text-red-500">needs research</span>}
+                            </td>
+                            <td className="px-3 py-2">
+                              {r.duplicate_of_account_id && (
+                                <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-semibold">DUP</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-500">If a lead already exists:</span>
+                      <select value={dedupe} onChange={e => setDedupe(e.target.value)} className="input py-1.5 text-sm w-auto">
+                        <option value="skip">Skip it</option>
+                        <option value="update">Fill in missing fields</option>
+                      </select>
+                    </div>
+                    <button onClick={handleCommit} disabled={committing} className="btn-primary text-sm px-5 flex items-center gap-2">
+                      {committing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                      Import {preview.row_count} Leads
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Accounts() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -142,6 +341,7 @@ export default function Accounts() {
   const [segment, setSegment] = useState('')
   const [sort, setSort] = useState('priority')
   const [showAdd, setShowAdd] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -166,9 +366,14 @@ export default function Accounts() {
           <h1 className="text-2xl font-bold text-gray-900">Accounts</h1>
           <p className="text-sm text-gray-400 mt-0.5">{accounts.length} target account{accounts.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => setShowAdd(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-2">
-          <Plus className="w-4 h-4" />Add Account
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowImport(true)} className="btn-secondary text-sm py-2 px-4 flex items-center gap-2">
+            <Upload className="w-4 h-4" />Upload Sheet
+          </button>
+          <button onClick={() => setShowAdd(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-2">
+            <Plus className="w-4 h-4" />Add Account
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -267,6 +472,13 @@ export default function Accounts() {
         <AddAccountModal
           onClose={() => setShowAdd(false)}
           onCreated={() => { setShowAdd(false); load() }}
+        />
+      )}
+
+      {showImport && (
+        <ImportAccountsModal
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); load() }}
         />
       )}
     </div>

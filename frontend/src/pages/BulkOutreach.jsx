@@ -266,11 +266,6 @@ export default function BulkOutreach() {
 
   return (
     <div className="space-y-5 max-w-6xl">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Bulk Outreach</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Upload leads, generate personalized cold emails, review, and send.</p>
-      </div>
-
       {/* Step indicator */}
       <div className="flex items-center gap-2">
         {STEPS.map((s, i) => (

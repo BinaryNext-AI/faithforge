@@ -135,6 +135,7 @@ export default function AccountDetail() {
           <button
             onClick={() => {
               const p = new URLSearchParams({
+                tab: 'single',
                 account_id: id,
                 company: acc.company_name || '',
                 segment: acc.segment || '',
@@ -143,7 +144,7 @@ export default function AccountDetail() {
                 pain_points: acc.pain_points || '',
                 entry_offer: acc.entry_offer || '',
               })
-              navigate(`/cold-email?${p.toString()}`)
+              navigate(`/outreach?${p.toString()}`)
             }}
             className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium"
           >

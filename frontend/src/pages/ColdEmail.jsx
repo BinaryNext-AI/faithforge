@@ -17,7 +17,7 @@ const DEFAULT_FORM = {
   sequence_length: 3,
 }
 
-export default function ColdEmail() {
+export default function ColdEmail({ embedded = false }) {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [form, setForm] = useState(() => ({
@@ -74,20 +74,30 @@ export default function ColdEmail() {
   return (
     <div className="space-y-5 max-w-6xl">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Cold Email Generator</h1>
-          <p className="text-sm text-gray-400 mt-0.5">AI-drafted outreach sequences — specific, executive-level, no fluff</p>
+      {!embedded && (
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Cold Email Generator</h1>
+            <p className="text-sm text-gray-400 mt-0.5">AI-drafted outreach sequences — specific, executive-level, no fluff</p>
+          </div>
+          {fromAccount && (
+            <button
+              onClick={() => navigate(`/accounts/${fromAccount}`)}
+              className="shrink-0 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900"
+            >
+              <ChevronLeft className="w-4 h-4" />Back to Account
+            </button>
+          )}
         </div>
-        {fromAccount && (
-          <button
-            onClick={() => navigate(`/accounts/${fromAccount}`)}
-            className="shrink-0 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900"
-          >
-            <ChevronLeft className="w-4 h-4" />Back to Account
-          </button>
-        )}
-      </div>
+      )}
+      {embedded && fromAccount && (
+        <button
+          onClick={() => navigate(`/accounts/${fromAccount}`)}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900"
+        >
+          <ChevronLeft className="w-4 h-4" />Back to Account
+        </button>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5 items-start">
         {/* Form */}

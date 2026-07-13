@@ -1179,8 +1179,11 @@ def send_cold_email_endpoint(
                .first())
 
     if acc:
-        if not acc.contact_email:
-            acc.contact_email = email
+        # The address typed into this send request is authoritative for THIS
+        # send — always sync it onto the account rather than only filling a
+        # blank, otherwise a stale on-file email silently wins and the mail
+        # goes somewhere the user didn't just tell it to.
+        acc.contact_email = email
         if body.segment and not acc.segment:
             acc.segment = body.segment
         if body.contact_name and not acc.contact_name:

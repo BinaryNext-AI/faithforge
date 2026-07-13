@@ -171,6 +171,7 @@ export default function AccountDetail() {
                 segment: acc.segment || '',
                 contact_name: acc.contact_name || '',
                 contact_title: acc.contact_title || '',
+                contact_email: acc.contact_email || '',
                 pain_points: acc.pain_points || '',
                 entry_offer: acc.entry_offer || '',
               })

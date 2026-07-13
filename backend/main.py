@@ -28,7 +28,7 @@ from schemas import (
     PacketBuildRequest, CompleteDraftRequest, CompleteDraftOut, RevisePacketRequest,
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
     AccountDeleteAllRequest, AccountDeleteAllOut,
-    ColdEmailRequest, ColdEmailOut, ColdEmailSendRequest, ColdEmailSendOut,
+    ColdEmailRequest, ColdEmailFollowUpRequest,
     GoNoGoOut,
     OutreachImportPreviewOut, OutreachImportCommitRequest, OutreachImportCommitOut,
     OutreachGenerateRequest, OutreachBatchOut, OutreachEmailOut, OutreachEmailUpdate,
@@ -1158,102 +1158,138 @@ def score_account_endpoint(account_id: int, db: Session = Depends(get_db), _: No
 
 
 # ─── Cold Email Generator (Build 02) ────────────────────────────────────────
+# One email drafted and saved per click — never a speculative multi-email
+# sequence up front. Every draft is a real OutreachEmail row tied to a
+# found-or-created Account, so it survives a refresh and uses the exact same
+# approve/send pipeline as Bulk Outreach (dry-run/live, BCC, daily cap,
+# opt-out check) via the existing /api/outreach/emails/{id}/* endpoints.
 
-@app.post("/api/cold-email/generate", response_model=ColdEmailOut)
-def generate_cold_email_endpoint(
-    body: ColdEmailRequest,
-    _: None = Depends(require_auth),
-):
-    from ai_screener import generate_cold_email
-    try:
-        result = generate_cold_email(
-            company_name=body.company_name,
-            segment=body.segment or "",
-            contact_name=body.contact_name or "",
-            contact_title=body.contact_title or "",
-            pain_points=body.pain_points or "",
-            entry_offer=body.entry_offer or "",
-            sequence_length=body.sequence_length,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
-    return result
-
-
-@app.post("/api/cold-email/send", response_model=ColdEmailSendOut)
-def send_cold_email_endpoint(
-    body: ColdEmailSendRequest,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_auth),
-):
-    """Sends a single, already-reviewed email drafted on the 'One Prospect'
-    tab — through the same guarded pipeline as Bulk Outreach (dry-run/live,
-    BCC, daily cap, opt-out check). Finds or creates the Account this
-    contact maps to so the CRM stays in sync."""
+def _find_or_create_account_for_contact(
+    company_name: str, segment: Optional[str], contact_name: Optional[str],
+    contact_title: Optional[str], contact_email: str, pain_points: Optional[str],
+    entry_offer: Optional[str], db: Session,
+) -> Account:
     import re as _re
-    email = body.contact_email.strip()
+    email = contact_email.strip()
     if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="That doesn't look like a valid email address.")
 
     acc = db.query(Account).filter(Account.contact_email.ilike(email)).first()
-    if not acc and body.contact_name:
+    if not acc and contact_name:
         acc = (db.query(Account)
-               .filter(Account.company_name.ilike(body.company_name.strip()),
-                       Account.contact_name.ilike(body.contact_name.strip()))
+               .filter(Account.company_name.ilike(company_name.strip()),
+                       Account.contact_name.ilike(contact_name.strip()))
                .first())
 
     if acc:
-        # The address typed into this send request is authoritative for THIS
-        # send — always sync it onto the account rather than only filling a
-        # blank, otherwise a stale on-file email silently wins and the mail
-        # goes somewhere the user didn't just tell it to.
+        # The address just typed into this form is authoritative for this
+        # contact going forward — always sync it, not just fill a blank,
+        # otherwise a stale on-file email silently wins over a correction.
         acc.contact_email = email
-        if body.segment and not acc.segment:
-            acc.segment = body.segment
-        if body.contact_name and not acc.contact_name:
-            acc.contact_name = body.contact_name
-        if body.contact_title and not acc.contact_title:
-            acc.contact_title = body.contact_title
-        if body.pain_points and not acc.pain_points:
-            acc.pain_points = body.pain_points
-        if body.entry_offer and not acc.entry_offer:
-            acc.entry_offer = body.entry_offer
+        if segment and not acc.segment:
+            acc.segment = segment
+        if contact_name and not acc.contact_name:
+            acc.contact_name = contact_name
+        if contact_title and not acc.contact_title:
+            acc.contact_title = contact_title
+        if pain_points and not acc.pain_points:
+            acc.pain_points = pain_points
+        if entry_offer and not acc.entry_offer:
+            acc.entry_offer = entry_offer
         acc.updated_at = datetime.utcnow()
     else:
         acc = Account(
-            company_name=body.company_name.strip(),
-            segment=body.segment or None,
-            contact_name=body.contact_name or None,
-            contact_title=body.contact_title or None,
-            contact_email=email,
-            pain_points=body.pain_points or None,
-            entry_offer=body.entry_offer or None,
-            stage="Not Contacted",
-            source="cold_email_single",
+            company_name=company_name.strip(), segment=segment or None,
+            contact_name=contact_name or None, contact_title=contact_title or None,
+            contact_email=email, pain_points=pain_points or None, entry_offer=entry_offer or None,
+            stage="Not Contacted", source="cold_email_single",
         )
         db.add(acc)
     db.flush()
+    return acc
 
+
+@app.post("/api/cold-email/generate", response_model=OutreachEmailOut)
+def generate_cold_email_endpoint(
+    body: ColdEmailRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    acc = _find_or_create_account_for_contact(
+        body.company_name, body.segment, body.contact_name, body.contact_title,
+        body.contact_email, body.pain_points, body.entry_offer, db,
+    )
     if acc.do_not_contact:
-        raise HTTPException(status_code=400, detail="This contact has opted out (Do Not Contact) — cannot send.")
+        raise HTTPException(status_code=400, detail="This contact has opted out (Do Not Contact) — cannot draft or send.")
 
-    email_row = OutreachEmail(
-        account_id=acc.id, subject=body.subject, body=body.body,
-        status="approved", approved=True, model_used="manual-single",
+    from ai_screener import generate_cold_email
+    try:
+        result = generate_cold_email(
+            company_name=body.company_name, segment=body.segment or "",
+            contact_name=body.contact_name or "", contact_title=body.contact_title or "",
+            pain_points=body.pain_points or "", entry_offer=body.entry_offer or "",
+            sequence_length=1,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
+
+    emails = result.get("emails") or []
+    if not emails:
+        raise HTTPException(status_code=500, detail="The model didn't return a usable draft — try again.")
+    drafted = emails[0]
+
+    row = OutreachEmail(
+        account_id=acc.id, subject=drafted.get("subject", ""), body=drafted.get("body", ""),
+        status="draft", model_used="cold-email-single",
     )
-    db.add(email_row)
+    db.add(row)
     db.commit()
-    db.refresh(email_row)
+    db.refresh(row)
+    log_action(db, "cold_email_single_drafted", details=json.dumps({"account_id": acc.id, "email_id": row.id}))
+    return _outreach_email_to_out(row, acc)
 
-    import outreach_sender
-    result = outreach_sender.send_outreach_email(email_row, acc, db)
-    log_action(db, "cold_email_single_sent" if result.get("ok") else "cold_email_single_send_failed",
-               details=json.dumps({"account_id": acc.id, "email_id": email_row.id, "error": result.get("error")}))
 
-    return ColdEmailSendOut(
-        ok=result.get("ok", False), dry_run=result.get("dry_run"),
-        sent_to=result.get("sent_to"), error=result.get("error"), account_id=acc.id,
+@app.post("/api/cold-email/follow-up", response_model=OutreachEmailOut)
+def generate_cold_email_follow_up(
+    body: ColdEmailFollowUpRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Explicit, manual follow-up for ONE contact — no eligibility/day gating
+    (that's for the bulk auto-follow-up sweep). Drafts referencing whatever
+    was most recently written for this account, regardless of send status."""
+    acc = db.query(Account).filter(Account.id == body.account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if acc.do_not_contact:
+        raise HTTPException(status_code=400, detail="This contact has opted out (Do Not Contact) — cannot draft or send.")
+
+    original = (db.query(OutreachEmail)
+                .filter(OutreachEmail.account_id == acc.id)
+                .order_by(desc(OutreachEmail.created_at))
+                .first())
+    if not original:
+        raise HTTPException(status_code=400, detail="No previous email on file for this contact to follow up on — generate an intro first.")
+
+    import outreach_generator as og
+    try:
+        results = og.generate_follow_ups([{"account": acc, "original_body": original.body or ""}])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Follow-up generation failed: {e}")
+
+    if not results or results[0].get("error"):
+        raise HTTPException(status_code=500, detail=(results[0]["error"] if results else "The model didn't return a usable follow-up — try again."))
+
+    drafted = results[0]
+    row = OutreachEmail(
+        account_id=acc.id, subject=drafted.get("subject", ""), body=drafted.get("body", ""),
+        status="draft", model_used="cold-email-single", is_follow_up=True,
     )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    log_action(db, "cold_email_single_follow_up_drafted", details=json.dumps({"account_id": acc.id, "email_id": row.id}))
+    return _outreach_email_to_out(row, acc)
 
 
 # ─── Bulk Outreach (Build 04) ────────────────────────────────────────────────

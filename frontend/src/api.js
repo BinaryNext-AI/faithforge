@@ -103,9 +103,9 @@ export const deleteAccount = (id) => api.delete(`/accounts/${id}`).then(r => r.d
 export const deleteAllAccounts = (confirm) => api.delete('/accounts', { data: { confirm } }).then(r => r.data)
 export const scoreAccount = (id) => api.post(`/accounts/${id}/score`).then(r => r.data)
 
-// Cold Email Generator
+// Cold Email Generator — one saved draft per click, no speculative sequence
 export const generateColdEmail = (data) => api.post('/cold-email/generate', data).then(r => r.data)
-export const sendColdEmail = (data) => api.post('/cold-email/send', data).then(r => r.data)
+export const generateColdEmailFollowUp = (accountId) => api.post('/cold-email/follow-up', { account_id: accountId }).then(r => r.data)
 
 // Bulk Outreach
 export const outreachPreviewFile = (file) => {

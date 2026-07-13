@@ -224,30 +224,11 @@ class CRMStats(BaseModel):
 
 
 # ─── Cold Email Generator (Build 02) ─────────────────────────────────────────
+# One email drafted and saved per click — no speculative multi-email sequence.
+# Every draft is a real OutreachEmail row (found-or-created Account), so it
+# survives a page refresh and reuses the same approve/send pipeline as bulk.
 
 class ColdEmailRequest(BaseModel):
-    company_name: str = Field(..., min_length=1)
-    segment: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_title: Optional[str] = None
-    pain_points: Optional[str] = None
-    entry_offer: Optional[str] = None
-    sequence_length: int = Field(default=3, ge=1, le=5)
-
-
-class ColdEmailItem(BaseModel):
-    step: int
-    subject: str
-    body: str
-    send_day: int
-    purpose: str
-
-
-class ColdEmailOut(BaseModel):
-    emails: List[ColdEmailItem]
-
-
-class ColdEmailSendRequest(BaseModel):
     company_name: str = Field(..., min_length=1)
     segment: Optional[str] = None
     contact_name: Optional[str] = None
@@ -255,16 +236,10 @@ class ColdEmailSendRequest(BaseModel):
     contact_email: str = Field(..., min_length=3)
     pain_points: Optional[str] = None
     entry_offer: Optional[str] = None
-    subject: str = Field(..., min_length=1)
-    body: str = Field(..., min_length=1)
 
 
-class ColdEmailSendOut(BaseModel):
-    ok: bool
-    dry_run: Optional[bool] = None
-    sent_to: Optional[str] = None
-    error: Optional[str] = None
-    account_id: Optional[int] = None
+class ColdEmailFollowUpRequest(BaseModel):
+    account_id: int
 
 
 # ─── Bulk Outreach (leads import + cold-email generation + send) ────────────

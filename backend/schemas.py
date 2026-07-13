@@ -247,6 +247,26 @@ class ColdEmailOut(BaseModel):
     emails: List[ColdEmailItem]
 
 
+class ColdEmailSendRequest(BaseModel):
+    company_name: str = Field(..., min_length=1)
+    segment: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_title: Optional[str] = None
+    contact_email: str = Field(..., min_length=3)
+    pain_points: Optional[str] = None
+    entry_offer: Optional[str] = None
+    subject: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+
+
+class ColdEmailSendOut(BaseModel):
+    ok: bool
+    dry_run: Optional[bool] = None
+    sent_to: Optional[str] = None
+    error: Optional[str] = None
+    account_id: Optional[int] = None
+
+
 # ─── Bulk Outreach (leads import + cold-email generation + send) ────────────
 
 class OutreachImportPreviewOut(BaseModel):

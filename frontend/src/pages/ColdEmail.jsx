@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Mail, Sparkles, Loader2, Copy, CheckCheck, AlertCircle,
-  ChevronLeft, ChevronRight, CalendarDays,
+  ChevronLeft, ChevronRight, CalendarDays, Send, AlertTriangle, CheckCircle2,
 } from 'lucide-react'
-import { generateColdEmail } from '../api'
+import { generateColdEmail, sendColdEmail, getSettings } from '../api'
 import { SEGMENTS } from './Accounts'
 
 const DEFAULT_FORM = {
@@ -12,6 +12,7 @@ const DEFAULT_FORM = {
   segment: '',
   contact_name: '',
   contact_title: '',
+  contact_email: '',
   pain_points: '',
   entry_offer: '',
   sequence_length: 3,
@@ -26,6 +27,7 @@ export default function ColdEmail({ embedded = false }) {
     segment: searchParams.get('segment') || '',
     contact_name: searchParams.get('contact_name') || '',
     contact_title: searchParams.get('contact_title') || '',
+    contact_email: searchParams.get('contact_email') || '',
     pain_points: searchParams.get('pain_points') || '',
     entry_offer: searchParams.get('entry_offer') || '',
   }))
@@ -34,6 +36,19 @@ export default function ColdEmail({ embedded = false }) {
   const [emails, setEmails] = useState([])
   const [activeTab, setActiveTab] = useState(0)
   const [copied, setCopied] = useState(null)
+  const [sending, setSending] = useState(false)
+  const [sendResult, setSendResult] = useState(null)
+  const [sendMode, setSendMode] = useState('dry_run')
+  const [outreachFromEmail, setOutreachFromEmail] = useState('')
+
+  useEffect(() => {
+    getSettings().then(data => {
+      const map = {}
+      data.forEach(s => { map[s.key] = s.value })
+      setSendMode(map.OUTREACH_SEND_MODE || 'dry_run')
+      setOutreachFromEmail(map.OUTREACH_FROM_EMAIL || '')
+    }).catch(() => {})
+  }, [])
 
   const fromAccount = searchParams.get('account_id')
 
@@ -45,6 +60,7 @@ export default function ColdEmail({ embedded = false }) {
     setLoading(true)
     setError(null)
     setEmails([])
+    setSendResult(null)
     try {
       const result = await generateColdEmail({ ...form })
       setEmails(result.emails || [])
@@ -53,6 +69,36 @@ export default function ColdEmail({ embedded = false }) {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const sendActive = async (em) => {
+    if (!form.contact_email.trim()) return
+    if (sendMode === 'live') {
+      const confirmed = window.confirm(
+        `Send a REAL email to ${form.contact_email} from ${outreachFromEmail}? This cannot be undone.`
+      )
+      if (!confirmed) return
+    }
+    setSending(true)
+    setSendResult(null)
+    try {
+      const result = await sendColdEmail({
+        company_name: form.company_name,
+        segment: form.segment,
+        contact_name: form.contact_name,
+        contact_title: form.contact_title,
+        contact_email: form.contact_email.trim(),
+        pain_points: form.pain_points,
+        entry_offer: form.entry_offer,
+        subject: em.subject,
+        body: em.body,
+      })
+      setSendResult(result)
+    } catch (err) {
+      setSendResult({ ok: false, error: err.message })
+    } finally {
+      setSending(false)
     }
   }
 
@@ -135,6 +181,12 @@ export default function ColdEmail({ embedded = false }) {
           </div>
 
           <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Contact Email</label>
+            <input value={form.contact_email} onChange={set('contact_email')} className="input" type="email" placeholder="jane@company.com" />
+            <p className="text-xs text-gray-400 mt-1">Optional for drafting — required if you want the app to send it for you instead of copy-pasting.</p>
+          </div>
+
+          <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Known Pain Points</label>
             <textarea
               value={form.pain_points}
@@ -204,6 +256,22 @@ export default function ColdEmail({ embedded = false }) {
             </div>
           ) : (
             <>
+              {sendMode === 'dry_run' && (
+                <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span><strong>Dry-run mode:</strong> Send routes to a test address, not the real contact. Switch to live in Settings when ready.</span>
+                </div>
+              )}
+
+              {sendResult && (
+                <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${sendResult.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                  {sendResult.ok ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  {sendResult.ok
+                    ? (sendResult.dry_run ? `Dry-run sent → ${sendResult.sent_to}` : `Sent to ${sendResult.sent_to}`)
+                    : sendResult.error}
+                </div>
+              )}
+
               {/* Tab bar + Copy All */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex gap-1.5 flex-wrap">
@@ -276,14 +344,23 @@ export default function ColdEmail({ embedded = false }) {
                     </pre>
                   </div>
 
-                  {/* Nav arrows */}
-                  <div className="flex justify-between pt-1">
+                  {/* Nav arrows + Send */}
+                  <div className="flex justify-between items-center pt-1">
                     <button
                       onClick={() => setActiveTab(t => Math.max(0, t - 1))}
                       disabled={activeTab === 0}
                       className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />Previous
+                    </button>
+                    <button
+                      onClick={() => sendActive(active)}
+                      disabled={sending || !form.contact_email.trim()}
+                      title={!form.contact_email.trim() ? 'Add a Contact Email above to enable sending' : ''}
+                      className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Send This Email{sendMode === 'dry_run' ? ' (Dry Run)' : ''}
                     </button>
                     <button
                       onClick={() => setActiveTab(t => Math.min(emails.length - 1, t + 1))}

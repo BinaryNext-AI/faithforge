@@ -105,6 +105,7 @@ export const scoreAccount = (id) => api.post(`/accounts/${id}/score`).then(r => 
 
 // Cold Email Generator
 export const generateColdEmail = (data) => api.post('/cold-email/generate', data).then(r => r.data)
+export const sendColdEmail = (data) => api.post('/cold-email/send', data).then(r => r.data)
 
 // Bulk Outreach
 export const outreachPreviewFile = (file) => {

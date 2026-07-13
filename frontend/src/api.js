@@ -133,7 +133,11 @@ export const outreachApproveEmail = (id) => api.post(`/outreach/emails/${id}/app
 export const outreachUnapproveEmail = (id) => api.post(`/outreach/emails/${id}/unapprove`).then(r => r.data)
 export const outreachBulkApprove = (ids) => api.post('/outreach/emails/bulk-approve', { ids }).then(r => r.data)
 export const outreachSendOne = (id) => api.post(`/outreach/emails/${id}/send`).then(r => r.data)
-export const outreachSendBulk = (ids) => api.post('/outreach/send', { ids }, { timeout: 300000 }).then(r => r.data)
+export const outreachSendBulk = (ids) => api.post('/outreach/send', { ids }).then(r => r.data)
+export const outreachGenerateFollowUps = (days = null, model = null) =>
+  api.post('/outreach/follow-ups/generate', { days, model }, { timeout: 600000 }).then(r => r.data)
+export const outreachFindEmail = (accountId) =>
+  api.post(`/outreach/accounts/${accountId}/find-email`, {}, { timeout: 60000 }).then(r => r.data)
 
 // Go/No-Go Assessment
 export const scoreGoNoGo = (id) => api.post(`/opportunities/${id}/gonogo`).then(r => r.data)

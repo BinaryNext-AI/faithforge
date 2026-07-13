@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     OUTREACH_BCC_EMAIL: str = "Bernedette.atong@faithforgetech.com"  # bcc'd on every outreach send, dry-run and live
     OUTREACH_TRANSPORT: str = "graph"         # "graph" (send-as via existing MS app) | "smtp"
     OUTREACH_MODEL: str = "gpt-4o"
+    # Domain-reputation protection: hard daily cap on live sends, and spacing
+    # between sends so the mailbox warms up gradually instead of bursting.
+    OUTREACH_DAILY_SEND_CAP: int = 15
+    OUTREACH_SEND_SPACING_SECONDS: int = 75
+    # Follow-ups: how many days with no reply before a lead is eligible
+    OUTREACH_FOLLOW_UP_DAYS: int = 4
+    # Apollo.io — used only to look up a verified work email for a lead
+    APOLLO_API_KEY: str = ""
     # SMTP fallback, only used if OUTREACH_TRANSPORT="smtp"
     OUTREACH_SMTP_HOST: str = ""
     OUTREACH_SMTP_PORT: int = 587

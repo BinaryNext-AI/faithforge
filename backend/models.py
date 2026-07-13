@@ -231,13 +231,16 @@ class Account(Base):
     notes = Column(Text)
     source = Column(String)
 
+    # Opt-out: once true, no outreach email will ever be sent to this account
+    do_not_contact = Column(Boolean, default=False)
+
     outreach_emails = relationship("OutreachEmail", back_populates="account", cascade="all, delete-orphan")
 
 
 # ─── Bulk Outreach (cold email at scale) ────────────────────────────────────
 
 OUTREACH_BATCH_STATUSES = ["generating", "ready", "sending", "completed", "failed"]
-OUTREACH_EMAIL_STATUSES = ["draft", "approved", "sending", "sent", "failed", "skipped"]
+OUTREACH_EMAIL_STATUSES = ["draft", "approved", "queued", "sending", "sent", "failed", "skipped"]
 
 
 class OutreachBatch(Base):
@@ -247,7 +250,7 @@ class OutreachBatch(Base):
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     source_filename = Column(String)
-    method = Column(String, default="sync")          # "sync" | "batch_api"
+    method = Column(String, default="sync")          # "sync" | "batch_api" | "follow_up"
     status = Column(String, default="generating")     # see OUTREACH_BATCH_STATUSES
     openai_batch_id = Column(String, nullable=True)    # for Batch API polling
     model_used = Column(String)
@@ -277,6 +280,8 @@ class OutreachEmail(Base):
     model_used = Column(String)
     sent_at = Column(DateTime, nullable=True)
     error = Column(Text, nullable=True)
+    is_follow_up = Column(Boolean, default=False)
+    was_dry_run = Column(Boolean, default=False)  # true if the "send" went to the test address
 
     account = relationship("Account", back_populates="outreach_emails")
     batch = relationship("OutreachBatch", back_populates="emails")

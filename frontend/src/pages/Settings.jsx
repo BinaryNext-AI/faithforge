@@ -57,6 +57,7 @@ const SETTING_GROUPS = [
     keys: [
       'OUTREACH_SEND_MODE', 'OUTREACH_FROM_EMAIL', 'OUTREACH_FROM_NAME', 'OUTREACH_BCC_EMAIL', 'OUTREACH_TEST_ADDRESS',
       'OUTREACH_TRANSPORT', 'OUTREACH_MODEL',
+      'OUTREACH_DAILY_SEND_CAP', 'OUTREACH_SEND_SPACING_SECONDS', 'OUTREACH_FOLLOW_UP_DAYS', 'APOLLO_API_KEY',
       'OUTREACH_SMTP_HOST', 'OUTREACH_SMTP_PORT', 'OUTREACH_SMTP_USERNAME', 'OUTREACH_SMTP_PASSWORD',
     ],
     descriptions: {
@@ -67,6 +68,10 @@ const SETTING_GROUPS = [
       OUTREACH_TEST_ADDRESS: 'Where dry-run sends go instead of the real prospect (falls back to NOTIFICATION_EMAIL if blank)',
       OUTREACH_TRANSPORT: '"graph" to send-as OUTREACH_FROM_EMAIL via the existing Microsoft Graph app (needs Mail.Send for that mailbox), or "smtp" to use the fields below',
       OUTREACH_MODEL: 'e.g. gpt-4o (higher quality) or gpt-4o-mini (~15x cheaper)',
+      OUTREACH_DAILY_SEND_CAP: 'Max real (live) emails per day — protects the domain\'s sender reputation. Start at 10-15 for a new mailbox and raise slowly over a few weeks.',
+      OUTREACH_SEND_SPACING_SECONDS: 'Seconds between each live send (default 75). Bulk sends drain in the background at this pace instead of bursting.',
+      OUTREACH_FOLLOW_UP_DAYS: 'Days with no reply before a contacted lead is eligible for a follow-up draft (default 4)',
+      APOLLO_API_KEY: 'Optional — powers the "Find email" button. Get it from apollo.io → Settings → Integrations → API. Each lookup uses Apollo credits.',
       OUTREACH_SMTP_HOST: 'Only used if OUTREACH_TRANSPORT is "smtp"',
       OUTREACH_SMTP_PORT: 'Usually 587 for TLS',
       OUTREACH_SMTP_USERNAME: 'SMTP login for the outreach mailbox',

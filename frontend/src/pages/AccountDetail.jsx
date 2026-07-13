@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail,
+  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail, Ban,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getAccount, updateAccount, updateAccountStage, deleteAccount, scoreAccount } from '../api'
@@ -94,6 +94,18 @@ export default function AccountDetail() {
     finally { setBusy(null) }
   }
 
+  const toggleDoNotContact = async () => {
+    const next = !acc.do_not_contact
+    if (next && !window.confirm('Mark this lead as Do Not Contact? No outreach email will ever be sent to them until you undo this.')) return
+    setBusy('dnc')
+    try {
+      const updated = await updateAccount(id, { do_not_contact: next })
+      setAcc(updated)
+      showToast(next ? 'Marked Do Not Contact — outreach to this lead is blocked' : 'Do Not Contact removed')
+    } catch (e) { showToast(e.message, 'error') }
+    finally { setBusy(null) }
+  }
+
   const remove = async () => {
     if (!window.confirm('Delete this account? This cannot be undone.')) return
     setBusy('delete')
@@ -128,6 +140,11 @@ export default function AccountDetail() {
                 <Bell className="w-3 h-3" />Awaiting reply
               </span>
             )}
+            {acc.do_not_contact && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded-full font-semibold">
+                <Ban className="w-3 h-3" />Do Not Contact
+              </span>
+            )}
           </div>
           {acc.segment && <p className="text-sm text-gray-400 mt-1">{acc.segment}</p>}
         </div>
@@ -149,6 +166,12 @@ export default function AccountDetail() {
             className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium"
           >
             <Mail className="w-4 h-4" />Draft Email
+          </button>
+          <button onClick={toggleDoNotContact} disabled={busy === 'dnc'}
+            className={`flex items-center gap-1.5 text-sm ${acc.do_not_contact ? 'text-gray-900 font-semibold' : 'text-gray-500 hover:text-gray-900'}`}
+            title="When on, no outreach email can ever be sent to this lead">
+            {busy === 'dnc' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+            {acc.do_not_contact ? 'Opted Out' : 'Opt Out'}
           </button>
           <button onClick={remove} disabled={busy === 'delete'}
             className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700">

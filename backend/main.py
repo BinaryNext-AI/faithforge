@@ -32,6 +32,7 @@ from schemas import (
     OutreachImportPreviewOut, OutreachImportCommitRequest, OutreachImportCommitOut,
     OutreachGenerateRequest, OutreachBatchOut, OutreachEmailOut, OutreachEmailUpdate,
     OutreachIdList, OutreachSendResult, OutreachSendOut,
+    OutreachFollowUpRequest, OutreachFindEmailOut,
 )
 from config import settings, UPLOAD_PATH, ALLOWED_EXTENSIONS
 
@@ -1156,9 +1157,11 @@ def _outreach_email_to_out(email_row: OutreachEmail, account: Optional[Account])
         model_used=email_row.model_used,
         sent_at=email_row.sent_at,
         error=email_row.error,
+        is_follow_up=bool(email_row.is_follow_up),
         account_company=account.company_name if account else None,
         account_contact=account.contact_name if account else None,
         account_has_email=bool(account.contact_email) if account else False,
+        account_do_not_contact=bool(account.do_not_contact) if account else False,
     )
 
 
@@ -1207,6 +1210,19 @@ def outreach_generate(
     if not accounts:
         raise HTTPException(status_code=404, detail="No matching accounts found.")
 
+    # Never draft intros for opted-out leads; skip already-contacted ones by
+    # default so nobody gets the same intro twice (override with include_contacted).
+    skipped_dnc = [a for a in accounts if a.do_not_contact]
+    accounts = [a for a in accounts if not a.do_not_contact]
+    skipped_contacted = []
+    if not body.include_contacted:
+        skipped_contacted = [a for a in accounts if a.stage and a.stage != "Not Contacted"]
+        accounts = [a for a in accounts if not (a.stage and a.stage != "Not Contacted")]
+    if not accounts:
+        raise HTTPException(status_code=400, detail=(
+            f"All selected leads were skipped ({len(skipped_contacted)} already contacted, "
+            f"{len(skipped_dnc)} opted out). Re-run with include_contacted to draft for contacted leads anyway."))
+
     model = body.model or settings.OUTREACH_MODEL
     batch = OutreachBatch(
         method=body.method,
@@ -1231,7 +1247,8 @@ def outreach_generate(
         db.refresh(batch)
         log_action(db, "outreach_batch_submitted", details=json.dumps(
             {"batch_id": batch.id, "method": "batch_api", "count": len(accounts)}))
-        return {"batch": OutreachBatchOut.model_validate(batch), "emails": []}
+        return {"batch": OutreachBatchOut.model_validate(batch), "emails": [],
+                "skipped_contacted": len(skipped_contacted), "skipped_do_not_contact": len(skipped_dnc)}
 
     # sync mode — generate immediately
     try:
@@ -1273,7 +1290,8 @@ def outreach_generate(
         {"batch_id": batch.id, "method": "sync", "generated": generated_count, "total": len(accounts)}))
 
     emails_out = [_outreach_email_to_out(row, accounts_by_id.get(row.account_id)) for row in created_emails]
-    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out}
+    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out,
+            "skipped_contacted": len(skipped_contacted), "skipped_do_not_contact": len(skipped_dnc)}
 
 
 @app.get("/api/outreach/batches", response_model=List[OutreachBatchOut])
@@ -1468,39 +1486,194 @@ def outreach_send_one(email_id: int, db: Session = Depends(get_db), _: None = De
     return OutreachSendResult(id=row.id, **{k: v for k, v in result.items() if k in ("ok", "dry_run", "sent_to", "error")})
 
 
-@app.post("/api/outreach/send", response_model=OutreachSendOut)
-def outreach_send_bulk(body: OutreachIdList, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+def _outreach_spacing_seconds(dry_run: bool) -> int:
+    if dry_run:
+        return 2  # all dry-run mail goes to one internal inbox — no reputation risk
+    try:
+        return max(int(settings.OUTREACH_SEND_SPACING_SECONDS), 2)
+    except (TypeError, ValueError):
+        return 75
+
+
+def _drain_outreach_queue(email_ids: List[int]):
+    """Background worker: sends queued emails one at a time with spacing so a
+    fresh mailbox never bursts. Stops early if the daily cap is hit and
+    releases the rest back to 'approved' for tomorrow."""
     import time
     import outreach_sender
-    rows = db.query(OutreachEmail).filter(OutreachEmail.id.in_(body.ids)).all()
-    account_ids = [r.account_id for r in rows]
-    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
-                       if account_ids else {})
+    db = SessionLocal()
+    try:
+        for i, email_id in enumerate(email_ids):
+            row = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+            if not row or row.status != "queued":
+                continue
+            account = db.query(Account).filter(Account.id == row.account_id).first()
+            if not account:
+                row.status = "failed"
+                row.error = "Linked account not found"
+                db.commit()
+                continue
+            result = outreach_sender.send_outreach_email(row, account, db)
+            if result.get("cap_reached"):
+                # release everything still queued back to approved and stop
+                remaining = (db.query(OutreachEmail)
+                             .filter(OutreachEmail.id.in_(email_ids[i + 1:]), OutreachEmail.status == "queued")
+                             .all())
+                for rest in remaining:
+                    rest.status = "approved"
+                    rest.error = result.get("error")
+                db.commit()
+                logger.info("[outreach] daily cap reached — %d email(s) released back to approved", len(remaining))
+                break
+            if i < len(email_ids) - 1:
+                time.sleep(_outreach_spacing_seconds(bool(result.get("dry_run"))))
+        sent = db.query(OutreachEmail).filter(OutreachEmail.id.in_(email_ids), OutreachEmail.status == "sent").count()
+        failed = db.query(OutreachEmail).filter(OutreachEmail.id.in_(email_ids), OutreachEmail.status == "failed").count()
+        log_action(db, "outreach_bulk_send_finished", details=json.dumps(
+            {"requested": len(email_ids), "sent": sent, "failed": failed}))
+    except Exception as e:
+        logger.exception("[outreach] queue drain crashed: %s", e)
+    finally:
+        db.close()
 
-    results = []
-    sent_count, dry_run_count, failed_count = 0, 0, 0
-    for i, row in enumerate(rows):
-        account = accounts_by_id.get(row.account_id)
-        if not account:
-            results.append(OutreachSendResult(id=row.id, ok=False, error="Linked account not found"))
-            failed_count += 1
+
+@app.post("/api/outreach/send", response_model=OutreachSendOut)
+def outreach_send_bulk(
+    body: OutreachIdList,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    rows = db.query(OutreachEmail).filter(
+        OutreachEmail.id.in_(body.ids), OutreachEmail.status == "approved").all()
+    if not rows:
+        raise HTTPException(status_code=400, detail="None of the selected emails are approved and ready to send.")
+
+    for row in rows:
+        row.status = "queued"
+    db.commit()
+
+    dry_run = settings.OUTREACH_SEND_MODE != "live"
+    spacing = _outreach_spacing_seconds(dry_run)
+    email_ids = [r.id for r in rows]
+    background_tasks.add_task(_drain_outreach_queue, email_ids)
+
+    log_action(db, "outreach_bulk_send_queued", details=json.dumps(
+        {"queued": len(email_ids), "dry_run": dry_run, "spacing_seconds": spacing}))
+    return OutreachSendOut(
+        queued=len(email_ids),
+        spacing_seconds=spacing,
+        message=(f"{len(email_ids)} email(s) queued — sending one every {spacing}s in the background. "
+                 "This page updates automatically."),
+    )
+
+
+@app.post("/api/outreach/follow-ups/generate")
+def outreach_generate_follow_ups(
+    body: OutreachFollowUpRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Drafts one short follow-up for every lead who got a real (live) intro
+    N+ days ago and hasn't replied. Drafts only — human approval still required."""
+    try:
+        days = body.days if body.days is not None else int(settings.OUTREACH_FOLLOW_UP_DAYS)
+    except (TypeError, ValueError):
+        days = 4
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    candidates = (db.query(Account)
+                  .filter(Account.stage == "Contacted",
+                          Account.awaiting_reply.is_(True),
+                          Account.do_not_contact.is_(False),
+                          Account.last_contacted_at <= cutoff)
+                  .all())
+
+    items = []
+    for acc in candidates:
+        # one follow-up per lead, ever — skip anyone who already has one
+        existing_fu = (db.query(OutreachEmail)
+                       .filter(OutreachEmail.account_id == acc.id,
+                               OutreachEmail.is_follow_up.is_(True),
+                               OutreachEmail.status.notin_(["failed", "skipped"]))
+                       .first())
+        if existing_fu:
             continue
-        result = outreach_sender.send_outreach_email(row, account, db)
-        if result.get("ok") and result.get("dry_run"):
-            dry_run_count += 1
-        elif result.get("ok"):
-            sent_count += 1
-        else:
-            failed_count += 1
-        results.append(OutreachSendResult(
-            id=row.id, **{k: v for k, v in result.items() if k in ("ok", "dry_run", "sent_to", "error")}))
-        if i < len(rows) - 1:
-            time.sleep(0.6)  # throttle between sends
+        original = (db.query(OutreachEmail)
+                    .filter(OutreachEmail.account_id == acc.id,
+                            OutreachEmail.status == "sent",
+                            OutreachEmail.was_dry_run.is_(False))
+                    .order_by(desc(OutreachEmail.sent_at))
+                    .first())
+        if not original:
+            continue  # only follow up on emails that actually reached the prospect
+        items.append({"account": acc, "original_body": original.body or ""})
 
-    log_action(db, "outreach_bulk_send", details=json.dumps({
-        "requested": len(body.ids), "sent": sent_count, "dry_run": dry_run_count, "failed": failed_count,
-    }))
-    return OutreachSendOut(results=results)
+    if not items:
+        return {"batch": None, "emails": [], "eligible": 0,
+                "message": f"No leads need a follow-up yet (contacted {days}+ days ago, no reply, none pending). Checked {len(candidates)} contacted lead(s)."}
+
+    model = body.model or settings.OUTREACH_MODEL
+    batch = OutreachBatch(method="follow_up", status="generating", model_used=model, lead_count=len(items))
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+
+    import outreach_generator as og
+    try:
+        results = og.generate_follow_ups(items, model=model)
+    except Exception as e:
+        batch.status = "failed"
+        batch.error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Follow-up generation failed: {e}")
+
+    accounts_by_id = {item["account"].id: item["account"] for item in items}
+    created, generated_count = [], 0
+    for r in results:
+        acc = accounts_by_id.get(r["account_id"])
+        row = OutreachEmail(
+            account_id=r["account_id"],
+            batch_id=batch.id,
+            to_email=acc.contact_email if acc else None,
+            subject=r["subject"],
+            body=r["body"],
+            status="draft",
+            model_used=r["model_used"],
+            error=r["error"],
+            is_follow_up=True,
+        )
+        db.add(row)
+        if not r["error"]:
+            generated_count += 1
+        created.append(row)
+
+    batch.status = "ready"
+    batch.generated_count = generated_count
+    db.commit()
+    for row in created:
+        db.refresh(row)
+    db.refresh(batch)
+
+    log_action(db, "outreach_follow_ups_generated", details=json.dumps(
+        {"batch_id": batch.id, "generated": generated_count, "eligible": len(items)}))
+    emails_out = [_outreach_email_to_out(row, accounts_by_id.get(row.account_id)) for row in created]
+    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out, "eligible": len(items)}
+
+
+@app.post("/api/outreach/accounts/{account_id}/find-email", response_model=OutreachFindEmailOut)
+def outreach_find_email(account_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    """Asks Apollo.io for a verified work email for this lead. Returns a
+    suggestion only — the frontend saves it to the account after the user confirms."""
+    acc = db.query(Account).filter(Account.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    import apollo_enrich
+    result = apollo_enrich.find_email(acc)
+    log_action(db, "outreach_email_lookup", details=json.dumps(
+        {"account_id": account_id, "company": acc.company_name,
+         "found": bool(result.get("email")), "error": result.get("error")}))
+    return OutreachFindEmailOut(**result)
 
 
 # ─── Go/No-Go Assessment (Build 03) ─────────────────────────────────────────
@@ -1589,7 +1762,7 @@ def ms_auth_login():
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
-SECRET_KEYS = {"OPENAI_API_KEY", "IMAP_PASSWORD", "SMTP_PASSWORD", "MS_CLIENT_SECRET", "OUTREACH_SMTP_PASSWORD"}
+SECRET_KEYS = {"OPENAI_API_KEY", "IMAP_PASSWORD", "SMTP_PASSWORD", "MS_CLIENT_SECRET", "OUTREACH_SMTP_PASSWORD", "APOLLO_API_KEY"}
 
 DEFAULT_SETTINGS = [
     ("OPENAI_API_KEY", ""),
@@ -1627,6 +1800,10 @@ DEFAULT_SETTINGS = [
     ("OUTREACH_BCC_EMAIL", "Bernedette.atong@faithforgetech.com"),
     ("OUTREACH_TRANSPORT", "graph"),
     ("OUTREACH_MODEL", "gpt-4o"),
+    ("OUTREACH_DAILY_SEND_CAP", "15"),
+    ("OUTREACH_SEND_SPACING_SECONDS", "75"),
+    ("OUTREACH_FOLLOW_UP_DAYS", "4"),
+    ("APOLLO_API_KEY", ""),
     ("OUTREACH_SMTP_HOST", ""),
     ("OUTREACH_SMTP_PORT", "587"),
     ("OUTREACH_SMTP_USERNAME", ""),

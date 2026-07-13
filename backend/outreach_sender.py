@@ -97,11 +97,27 @@ def _send_via_smtp(to_address: str, subject: str, html_body: str, text_body: str
     server.quit()
 
 
+def _live_sends_today(db) -> int:
+    from models import OutreachEmail
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return (db.query(OutreachEmail)
+            .filter(OutreachEmail.status == "sent",
+                    OutreachEmail.sent_at >= today_start,
+                    OutreachEmail.was_dry_run.is_(False))
+            .count())
+
+
 def send_outreach_email(email_row, account, db) -> Dict[str, Any]:
-    """Send one approved OutreachEmail. Returns {ok, dry_run, sent_to, error}.
-    Never raises — callers can loop over many of these safely."""
-    if email_row.status != "approved":
+    """Send one approved (or queued) OutreachEmail. Returns {ok, dry_run,
+    sent_to, error, cap_reached}. Never raises — callers can loop safely."""
+    if email_row.status not in ("approved", "queued"):
         return {"ok": False, "error": f"Email status is '{email_row.status}', not 'approved' — refusing to send."}
+
+    if getattr(account, "do_not_contact", False):
+        email_row.status = "skipped"
+        email_row.error = "This lead opted out (Do Not Contact) — never emailed."
+        db.commit()
+        return {"ok": False, "error": email_row.error}
 
     real_address = (account.contact_email or "").strip()
     if not real_address:
@@ -111,6 +127,19 @@ def send_outreach_email(email_row, account, db) -> Dict[str, Any]:
         return {"ok": False, "error": email_row.error}
 
     dry_run = settings.OUTREACH_SEND_MODE != "live"
+
+    # Domain-reputation guard: hard daily cap on live sends. Dry runs (all to
+    # one internal test inbox) don't count against or consume the cap.
+    if not dry_run:
+        try:
+            cap = int(settings.OUTREACH_DAILY_SEND_CAP)
+        except (TypeError, ValueError):
+            cap = 15
+        if cap > 0 and _live_sends_today(db) >= cap:
+            email_row.status = "approved"  # keep it ready for tomorrow
+            email_row.error = f"Daily send cap of {cap} reached — try again tomorrow (or raise OUTREACH_DAILY_SEND_CAP in Settings)."
+            db.commit()
+            return {"ok": False, "error": email_row.error, "cap_reached": True}
     test_address = settings.OUTREACH_TEST_ADDRESS or settings.NOTIFICATION_EMAIL
     send_to = test_address if dry_run else real_address
     if dry_run and not send_to:
@@ -149,6 +178,7 @@ def send_outreach_email(email_row, account, db) -> Dict[str, Any]:
 
     email_row.status = "sent"
     email_row.sent_at = datetime.utcnow()
+    email_row.was_dry_run = dry_run
     email_row.error = None
     db.commit()
 

@@ -72,6 +72,25 @@ Return ONLY a valid JSON object with this schema:
 One entry per lead, in any order, using the exact "index" value given for each lead. Do not skip any lead."""
 
 
+FOLLOW_UP_PROMPT = """Each lead below was already sent the intro message shown as "original_message" and has not replied after several days. Write ONE short follow-up for EACH lead, in the same warm voice described in your system instructions, with these extra rules:
+- 2-3 sentences, 30-55 words. Even shorter and lighter than the intro.
+- Gently float the earlier note back up ("just wanted to float this back to the top of your inbox") — never guilt-trip, never "did you see my last email?", never manufactured urgency.
+- Add ONE small new reason to connect if the lead's context supports it; otherwise keep it a simple friendly nudge.
+- Same soft close and sign-off as the intro voice rules.
+
+## LEADS
+{leads_json}
+
+Return ONLY a valid JSON object with this schema:
+{{
+  "emails": [
+    {{"index": <the lead's index exactly as given>, "subject": "<short, warm subject, under 8 words>", "body": "<the follow-up, plain text>"}}
+  ]
+}}
+
+One entry per lead, using the exact "index" value given. Do not skip any lead."""
+
+
 def _client() -> OpenAI:
     return OpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -167,6 +186,51 @@ def generate_sync(accounts: List, model: str = DEFAULT_MODEL) -> List[Dict[str, 
                     "model_used": model,
                     "error": chunk_error or "Model did not return this lead — retry generation.",
                 })
+    return results
+
+
+def generate_follow_ups(items: List[Dict[str, Any]], model: str = DEFAULT_MODEL) -> List[Dict[str, Any]]:
+    """items: [{"account": Account, "original_body": str}]. Returns the same
+    shape as generate_sync: [{account_id, subject, body, model_used, error}]."""
+    client = _client()
+    system = _system_prompt()
+    results: List[Dict[str, Any]] = []
+
+    for chunk in _chunk(items, CHUNK_SIZE):
+        leads = []
+        for i, item in enumerate(chunk):
+            ctx = _lead_context(item["account"], i)
+            ctx["original_message"] = item.get("original_body") or ""
+            leads.append(ctx)
+        prompt = FOLLOW_UP_PROMPT.format(leads_json=json.dumps(leads, indent=1))
+        chunk_error = None
+        by_index: Dict[int, dict] = {}
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                max_tokens=250 * len(chunk) + 200,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            raw = resp.choices[0].message.content or ""
+            parsed = _extract_json(raw) or {}
+            by_index = {int(e["index"]): e for e in parsed.get("emails", []) if "index" in e}
+        except Exception as e:
+            logger.exception("[outreach] follow-up chunk failed: %s", e)
+            chunk_error = str(e)
+
+        for i, item in enumerate(chunk):
+            entry = by_index.get(i)
+            results.append({
+                "account_id": item["account"].id,
+                "subject": (entry.get("subject") or "").strip() if entry else "",
+                "body": (entry.get("body") or "").strip() if entry else "",
+                "model_used": model,
+                "error": None if entry else (chunk_error or "Model did not return this lead — retry generation."),
+            })
     return results
 
 

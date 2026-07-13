@@ -2,18 +2,20 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Upload, FileSpreadsheet, Link as LinkIcon, Loader2, AlertCircle, CheckCircle2,
   Sparkles, Mail, Send, Pencil, Check, X, ChevronRight, ChevronLeft, RefreshCw,
-  Users, AlertTriangle, Clock,
+  Users, AlertTriangle, Clock, Search, Ban, Reply,
 } from 'lucide-react'
 import {
   outreachPreviewFile, outreachPreviewGoogleSheet, outreachCommitImport,
   outreachGenerate, outreachRefreshBatch,
   outreachGetEmails, outreachUpdateEmail, outreachApproveEmail, outreachUnapproveEmail,
   outreachBulkApprove, outreachSendOne, outreachSendBulk, getSettings,
+  outreachGenerateFollowUps, outreachFindEmail, updateAccount,
 } from '../api'
 
 const STATUS_STYLES = {
   draft: 'bg-gray-100 text-gray-600',
   approved: 'bg-blue-100 text-blue-800',
+  queued: 'bg-indigo-100 text-indigo-700',
   sending: 'bg-amber-100 text-amber-800',
   sent: 'bg-emerald-100 text-emerald-800',
   failed: 'bg-red-100 text-red-700',
@@ -67,6 +69,12 @@ export default function BulkOutreach() {
   const [outreachFromEmail, setOutreachFromEmail] = useState('')
   const [sending, setSending] = useState(false)
   const [sendResults, setSendResults] = useState(null)
+
+  // Extras
+  const [genNotice, setGenNotice] = useState(null)          // "N already-contacted leads skipped"
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [followUpNotice, setFollowUpNotice] = useState(null)
+  const [findState, setFindState] = useState({})            // emailId -> {loading, email, email_status, message, error}
 
   useEffect(() => {
     getSettings().then(data => {
@@ -131,9 +139,14 @@ export default function BulkOutreach() {
   const handleGenerate = async () => {
     setGenerating(true)
     setError(null)
+    setGenNotice(null)
     try {
       const result = await outreachGenerate(committedAccountIds, generateMethod, generateModel || null)
       setCurrentBatch(result.batch)
+      const skipped = (result.skipped_contacted || 0) + (result.skipped_do_not_contact || 0)
+      if (skipped > 0) {
+        setGenNotice(`${skipped} lead(s) were skipped — already contacted or opted out — so nobody gets a duplicate intro.`)
+      }
       if (generateMethod === 'sync') {
         setEmails(result.emails || [])
         setStep('review')
@@ -142,6 +155,27 @@ export default function BulkOutreach() {
       setError(err.message)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const handleGenerateFollowUps = async () => {
+    setFollowUpLoading(true)
+    setError(null)
+    setFollowUpNotice(null)
+    try {
+      const result = await outreachGenerateFollowUps()
+      if (!result.batch) {
+        setFollowUpNotice(result.message || 'No leads need a follow-up right now.')
+        return
+      }
+      setCurrentBatch(result.batch)
+      setEmails(result.emails || [])
+      setStatusFilter('')
+      setStep('review')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setFollowUpLoading(false)
     }
   }
 
@@ -185,6 +219,48 @@ export default function BulkOutreach() {
     if (step === 'review' && currentBatch) refreshEmails()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, step])
+
+  // Auto-poll a queued Batch API job so the user never has to click "Check Now"
+  useEffect(() => {
+    if (!currentBatch || currentBatch.method !== 'batch_api') return
+    if (['ready', 'failed'].includes(currentBatch.status)) return
+    const t = setInterval(() => { handlePollBatch() }, 20000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBatch])
+
+  // While the background send queue is draining, keep the list fresh
+  const hasActiveSends = emails.some(e => ['queued', 'sending'].includes(e.status))
+  useEffect(() => {
+    if (step !== 'review' || !hasActiveSends) return
+    const t = setInterval(() => { refreshEmails() }, 5000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, hasActiveSends])
+
+  // ── Find a missing email via Apollo ────────────────────────────────────────
+
+  const handleFindEmail = async (email) => {
+    setFindState(s => ({ ...s, [email.id]: { loading: true } }))
+    try {
+      const r = await outreachFindEmail(email.account_id)
+      setFindState(s => ({ ...s, [email.id]: { loading: false, ...r } }))
+    } catch (err) {
+      setFindState(s => ({ ...s, [email.id]: { loading: false, error: err.message } }))
+    }
+  }
+
+  const handleUseFoundEmail = async (email) => {
+    const cand = findState[email.id]
+    if (!cand?.email) return
+    try {
+      await updateAccount(email.account_id, { contact_email: cand.email })
+      setFindState(s => { const c = { ...s }; delete c[email.id]; return c })
+      await refreshEmails()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   const startEdit = (email) => {
     setEditingId(email.id)
@@ -236,12 +312,14 @@ export default function BulkOutreach() {
     }
   }
 
+  const isSendable = (e) => e.status === 'approved' && e.account_has_email && !e.account_do_not_contact
+
   const handleSendApproved = async () => {
-    const approvedIds = emails.filter(e => e.status === 'approved' && e.account_has_email).map(e => e.id)
+    const approvedIds = emails.filter(isSendable).map(e => e.id)
     if (approvedIds.length === 0) return
     if (sendMode === 'live') {
       const confirmed = window.confirm(
-        `You are about to send ${approvedIds.length} REAL email(s) to real prospects from ${outreachFromEmail}. This cannot be undone. Continue?`
+        `You are about to send ${approvedIds.length} REAL email(s) to real prospects from ${outreachFromEmail}, spaced out in the background. This cannot be undone. Continue?`
       )
       if (!confirmed) return
     }
@@ -259,7 +337,7 @@ export default function BulkOutreach() {
   }
 
   const approvedCount = emails.filter(e => e.status === 'approved').length
-  const sendableApprovedCount = emails.filter(e => e.status === 'approved' && e.account_has_email).length
+  const sendableApprovedCount = emails.filter(isSendable).length
   const draftCount = emails.filter(e => e.status === 'draft').length
   const sentCount = emails.filter(e => e.status === 'sent').length
   const emailMissingCount = emails.filter(e => !e.account_has_email).length
@@ -404,6 +482,27 @@ export default function BulkOutreach() {
         </div>
       )}
 
+      {/* Follow-ups — separate from uploading new leads */}
+      {step === 'upload' && (
+        <div className="card p-5 flex items-center justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+              <Reply className="w-4 h-4 text-blue-600" />Already sent intros?
+            </p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Drafts a short, friendly follow-up for every lead you emailed 4+ days ago who hasn't replied.
+              You still review and approve each one before anything is sent.
+            </p>
+            {followUpNotice && <p className="text-xs text-amber-600 mt-1.5">{followUpNotice}</p>}
+          </div>
+          <button onClick={handleGenerateFollowUps} disabled={followUpLoading}
+            className="btn-primary text-sm px-4 flex items-center gap-2 shrink-0">
+            {followUpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Reply className="w-4 h-4" />}
+            Generate Follow-ups
+          </button>
+        </div>
+      )}
+
       {/* STEP: Generate */}
       {step === 'generate' && (
         <div className="card p-6 space-y-5">
@@ -440,10 +539,16 @@ export default function BulkOutreach() {
             />
           </div>
 
+          {genNotice && (
+            <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+              <AlertTriangle className="w-4 h-4 shrink-0" />{genNotice}
+            </div>
+          )}
+
           {currentBatch && currentBatch.method === 'batch_api' && currentBatch.status !== 'ready' && (
             <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Batch job {currentBatch.status} (id: {currentBatch.openai_batch_id}). Check back in a few minutes.
+              Batch job {currentBatch.status} — checking automatically every 20 seconds, no need to do anything.
               <button onClick={handlePollBatch} disabled={generating} className="btn-secondary text-xs ml-auto flex items-center gap-1">
                 <RefreshCw className="w-3 h-3" />Check Now
               </button>
@@ -467,7 +572,7 @@ export default function BulkOutreach() {
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex gap-2 flex-wrap">
-              {['', 'draft', 'approved', 'sent', 'failed', 'skipped'].map(s => (
+              {['', 'draft', 'approved', 'queued', 'sent', 'failed', 'skipped'].map(s => (
                 <button
                   key={s || 'all'}
                   onClick={() => setStatusFilter(s)}
@@ -508,8 +613,28 @@ export default function BulkOutreach() {
                   <div className="flex items-center gap-2 min-w-0">
                     <p className="font-semibold text-sm text-gray-900 truncate">{email.account_company}</p>
                     <span className="text-xs text-gray-400 truncate">{email.account_contact}</span>
-                    {!email.account_has_email && (
-                      <span className="shrink-0 px-1.5 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-semibold">EMAIL NEEDED</span>
+                    {email.is_follow_up && (
+                      <span className="shrink-0 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-semibold">FOLLOW-UP</span>
+                    )}
+                    {email.account_do_not_contact && (
+                      <span className="shrink-0 px-1.5 py-0.5 bg-gray-800 text-white rounded text-[10px] font-semibold flex items-center gap-1">
+                        <Ban className="w-2.5 h-2.5" />OPTED OUT
+                      </span>
+                    )}
+                    {!email.account_has_email && !email.account_do_not_contact && (
+                      <>
+                        <span className="shrink-0 px-1.5 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-semibold">EMAIL NEEDED</span>
+                        <button
+                          onClick={() => handleFindEmail(email)}
+                          disabled={findState[email.id]?.loading}
+                          className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-violet-100 text-violet-700 hover:bg-violet-200"
+                        >
+                          {findState[email.id]?.loading
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <Search className="w-3 h-3" />}
+                          Find email
+                        </button>
+                      </>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -519,6 +644,29 @@ export default function BulkOutreach() {
                     )}
                   </div>
                 </div>
+
+                {findState[email.id] && !findState[email.id].loading && (
+                  <div className="flex items-center gap-2 flex-wrap p-2.5 bg-violet-50 border border-violet-200 rounded-lg text-xs">
+                    {findState[email.id].email ? (
+                      <>
+                        <span className="text-violet-900">
+                          Apollo found: <strong>{findState[email.id].email}</strong>
+                          {findState[email.id].email_status && <span className="text-violet-500"> ({findState[email.id].email_status})</span>}
+                        </span>
+                        <button onClick={() => handleUseFoundEmail(email)}
+                          className="px-2.5 py-1 rounded bg-violet-600 text-white font-semibold hover:bg-violet-700">
+                          Use this email
+                        </button>
+                        <button onClick={() => setFindState(s => { const c = { ...s }; delete c[email.id]; return c })}
+                          className="text-violet-400 hover:text-violet-700">Dismiss</button>
+                      </>
+                    ) : (
+                      <span className="text-violet-800">
+                        {findState[email.id].error || findState[email.id].message || 'No email found for this lead.'}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {editingId === email.id ? (
                   <div className="space-y-2">
@@ -563,7 +711,7 @@ export default function BulkOutreach() {
                   {email.status === 'approved' && (
                     <button
                       onClick={() => handleSendOne(email.id)}
-                      disabled={!email.account_has_email}
+                      disabled={!email.account_has_email || email.account_do_not_contact}
                       className="text-xs px-3 py-1.5 rounded-lg font-semibold bg-emerald-600 text-white flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Send className="w-3.5 h-3.5" />Send
@@ -591,7 +739,14 @@ export default function BulkOutreach() {
           {sendResults && (
             <div className="card p-4">
               <p className="text-sm font-semibold text-gray-900 mb-2">Send Results</p>
-              {sendResults.results ? (
+              {sendResults.queued > 0 ? (
+                <div className="text-xs flex items-center gap-2 text-indigo-700">
+                  {hasActiveSends ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                  {hasActiveSends
+                    ? (sendResults.message || `${sendResults.queued} email(s) queued — sending in the background.`)
+                    : 'Background sending finished — statuses above are final.'}
+                </div>
+              ) : sendResults.results && sendResults.results.length > 0 ? (
                 <div className="space-y-1">
                   {sendResults.results.map(r => (
                     <div key={r.id} className={`text-xs flex items-center gap-2 ${r.ok ? 'text-emerald-600' : 'text-red-500'}`}>

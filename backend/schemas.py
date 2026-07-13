@@ -182,6 +182,7 @@ class AccountBase(BaseModel):
     entry_offer: Optional[str] = None
     notes: Optional[str] = None
     source: Optional[str] = None
+    do_not_contact: Optional[bool] = None
 
 
 class AccountCreate(AccountBase):
@@ -265,6 +266,22 @@ class OutreachGenerateRequest(BaseModel):
     account_ids: List[int] = Field(..., min_length=1)
     method: str = Field(default="sync", pattern="^(sync|batch_api)$")
     model: Optional[str] = None
+    include_contacted: bool = False  # by default, leads already contacted are skipped
+
+
+class OutreachFollowUpRequest(BaseModel):
+    days: Optional[int] = None   # min days since last contact; default from settings
+    model: Optional[str] = None
+
+
+class OutreachFindEmailOut(BaseModel):
+    ok: bool
+    email: Optional[str] = None
+    email_status: Optional[str] = None
+    person_title: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
 
 
 class OutreachBatchOut(BaseModel):
@@ -298,9 +315,11 @@ class OutreachEmailOut(BaseModel):
     model_used: Optional[str]
     sent_at: Optional[datetime]
     error: Optional[str]
+    is_follow_up: bool = False
     account_company: Optional[str] = None
     account_contact: Optional[str] = None
     account_has_email: bool = False
+    account_do_not_contact: bool = False
 
     class Config:
         from_attributes = True
@@ -325,7 +344,10 @@ class OutreachSendResult(BaseModel):
 
 
 class OutreachSendOut(BaseModel):
-    results: List[OutreachSendResult]
+    results: List[OutreachSendResult] = []
+    queued: int = 0                # emails accepted into the background send queue
+    spacing_seconds: int = 0       # gap between sends while draining the queue
+    message: Optional[str] = None
 
 
 # ─── Go/No-Go Assessment (Build 03) ──────────────────────────────────────────

@@ -58,11 +58,31 @@ def _backfill_seen_emails():
         db.close()
 
 
+def _ensure_column(conn, table: str, col_name: str, col_type: str):
+    """Add a column to an existing table if missing — works on SQLite and Postgres.
+    create_all only creates new tables; it never alters existing ones."""
+    from sqlalchemy import text
+    if _is_sqlite:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        if col_name not in {row[1] for row in rows}:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+    else:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+
+
 def _migrate_add_columns():
-    """Add new columns to existing SQLite DBs. Postgres uses create_all instead."""
+    from sqlalchemy import text
+
+    # Columns added after initial deploy — needed on both SQLite and Postgres.
+    with engine.connect() as conn:
+        _ensure_column(conn, "accounts", "do_not_contact", "BOOLEAN DEFAULT FALSE")
+        _ensure_column(conn, "outreach_emails", "is_follow_up", "BOOLEAN DEFAULT FALSE")
+        _ensure_column(conn, "outreach_emails", "was_dry_run", "BOOLEAN DEFAULT FALSE")
+        conn.commit()
+
+    # Legacy SQLite-only additions (Postgres deploys were created after these existed).
     if not _is_sqlite:
         return
-    from sqlalchemy import text
     new_columns = [
         ("score_breakdown", "TEXT"),
         ("questions_deadline", "VARCHAR"),

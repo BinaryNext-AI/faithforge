@@ -99,10 +99,15 @@ _ALIASES_BY_LENGTH = sorted(_ALIASES, key=len, reverse=True)
 
 def _map_header(header: str) -> Optional[str]:
     key = _norm(header)
+    if not key:
+        return None
     if key in _ALIASES:
         return _ALIASES[key]
+    # Word-boundary substring match only — a plain `alias in key` check would
+    # false-positive on short aliases like "org" matching inside unrelated
+    # words (e.g. "org" is a substring of "FaithForge").
     for alias in _ALIASES_BY_LENGTH:
-        if alias and alias in key:
+        if alias and re.search(rf"\b{re.escape(alias)}\b", key):
             return _ALIASES[alias]
     return None
 
@@ -112,17 +117,41 @@ def auto_map_columns(headers: List[str]) -> Dict[str, Optional[str]]:
     return {h: _map_header(h) for h in headers}
 
 
+def _header_row_score(cells: List[str]) -> int:
+    """How many cells in this row look like a recognized column header."""
+    return sum(1 for c in cells if c and _map_header(c))
+
+
+def _detect_header_row(rows: List[List[Any]], max_scan: int = 5) -> int:
+    """Some exported sheets have a title/metadata banner line above the real
+    header row (e.g. "Prepared for Bernedette... | Created: 2026-06-03").
+    Scans the first few rows and picks whichever one matches the most known
+    column aliases, instead of blindly trusting row 1."""
+    best_idx, best_score = 0, 0
+    for i, raw in enumerate(rows[:max_scan]):
+        cells = [str(c).strip() if c is not None else "" for c in raw]
+        if not any(cells):
+            continue
+        score = _header_row_score(cells)
+        if score > best_score:
+            best_score, best_idx = score, i
+    return best_idx
+
+
 # ── File parsing ─────────────────────────────────────────────────────────────
 
 def parse_xlsx(content: bytes) -> Tuple[List[str], List[Dict[str, str]]]:
     from openpyxl import load_workbook
     wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
-    rows_iter = ws.iter_rows(values_only=True)
-    header_row = next(rows_iter, [])
+    all_rows = list(ws.iter_rows(values_only=True))
+    if not all_rows:
+        return [], []
+    header_idx = _detect_header_row(all_rows)
+    header_row = all_rows[header_idx]
     headers = [str(h).strip() if h is not None else "" for h in header_row]
     rows = []
-    for raw in rows_iter:
+    for raw in all_rows[header_idx + 1:]:
         if raw is None or all(v is None or str(v).strip() == "" for v in raw):
             continue
         row = {}
@@ -137,13 +166,22 @@ def parse_xlsx(content: bytes) -> Tuple[List[str], List[Dict[str, str]]]:
 
 def parse_csv(content: bytes) -> Tuple[List[str], List[Dict[str, str]]]:
     text = content.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
-    headers = reader.fieldnames or []
+    all_rows = list(csv.reader(io.StringIO(text)))
+    if not all_rows:
+        return [], []
+    header_idx = _detect_header_row(all_rows)
+    headers = [str(h).strip() if h is not None else "" for h in all_rows[header_idx]]
     rows = []
-    for raw in reader:
-        if not any((v or "").strip() for v in raw.values()):
+    for raw in all_rows[header_idx + 1:]:
+        if not any((v or "").strip() for v in raw):
             continue
-        rows.append({k: (v or "").strip() for k, v in raw.items() if k})
+        row = {}
+        for i, h in enumerate(headers):
+            if not h:
+                continue
+            val = raw[i] if i < len(raw) else ""
+            row[h] = (val or "").strip()
+        rows.append(row)
     return headers, rows
 
 

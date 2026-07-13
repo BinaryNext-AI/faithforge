@@ -230,3 +230,53 @@ class Account(Base):
     entry_offer = Column(Text)
     notes = Column(Text)
     source = Column(String)
+
+    outreach_emails = relationship("OutreachEmail", back_populates="account", cascade="all, delete-orphan")
+
+
+# ─── Bulk Outreach (cold email at scale) ────────────────────────────────────
+
+OUTREACH_BATCH_STATUSES = ["generating", "ready", "sending", "completed", "failed"]
+OUTREACH_EMAIL_STATUSES = ["draft", "approved", "sending", "sent", "failed", "skipped"]
+
+
+class OutreachBatch(Base):
+    """A single generation run against a set of Accounts (leads)."""
+    __tablename__ = "outreach_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    source_filename = Column(String)
+    method = Column(String, default="sync")          # "sync" | "batch_api"
+    status = Column(String, default="generating")     # see OUTREACH_BATCH_STATUSES
+    openai_batch_id = Column(String, nullable=True)    # for Batch API polling
+    model_used = Column(String)
+    lead_count = Column(Integer, default=0)
+    generated_count = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    emails = relationship("OutreachEmail", back_populates="batch")
+
+
+class OutreachEmail(Base):
+    """A single generated (and eventually sent) cold email tied to an Account."""
+    __tablename__ = "outreach_emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False, index=True)
+    batch_id = Column(Integer, ForeignKey("outreach_batches.id"), nullable=True, index=True)
+
+    to_email = Column(String)          # snapshot of recipient at generation time
+    subject = Column(String)
+    body = Column(Text)
+    status = Column(String, default="draft", index=True)  # see OUTREACH_EMAIL_STATUSES
+    approved = Column(Boolean, default=False)
+    edited = Column(Boolean, default=False)   # true once a human edits subject/body
+    model_used = Column(String)
+    sent_at = Column(DateTime, nullable=True)
+    error = Column(Text, nullable=True)
+
+    account = relationship("Account", back_populates="outreach_emails")
+    batch = relationship("OutreachBatch", back_populates="emails")

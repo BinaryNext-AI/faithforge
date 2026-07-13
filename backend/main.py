@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import (
-    FastAPI, Depends, HTTPException, UploadFile, File,
+    FastAPI, Depends, HTTPException, UploadFile, File, Form,
     BackgroundTasks, Request, Query, Header, Response
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +20,7 @@ from sqlalchemy import desc, func
 from database import get_db, init_db
 from models import (
     Opportunity, Document, Packet, AuditLog, AppSetting, VALID_STATUSES,
-    Account, ACCOUNT_STAGES,
+    Account, ACCOUNT_STAGES, OutreachBatch, OutreachEmail,
 )
 from schemas import (
     OpportunityOut, OpportunityUpdate, OpportunityCreate, StatusUpdate, DocumentOut,
@@ -29,6 +29,9 @@ from schemas import (
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
     ColdEmailRequest, ColdEmailOut,
     GoNoGoOut,
+    OutreachImportPreviewOut, OutreachImportCommitRequest, OutreachImportCommitOut,
+    OutreachGenerateRequest, OutreachBatchOut, OutreachEmailOut, OutreachEmailUpdate,
+    OutreachIdList, OutreachSendResult, OutreachSendOut,
 )
 from config import settings, UPLOAD_PATH, ALLOWED_EXTENSIONS
 
@@ -1132,6 +1135,374 @@ def generate_cold_email_endpoint(
     return result
 
 
+# ─── Bulk Outreach (Build 04) ────────────────────────────────────────────────
+# Upload a leads file -> AI drafts one cold email per lead -> human approves ->
+# send from a dedicated mailbox (never Bernedette's personal inbox, and never
+# a status other than "approved"). See lead_import.py, outreach_generator.py,
+# outreach_sender.py.
+
+def _outreach_email_to_out(email_row: OutreachEmail, account: Optional[Account]) -> OutreachEmailOut:
+    return OutreachEmailOut(
+        id=email_row.id,
+        created_at=email_row.created_at,
+        account_id=email_row.account_id,
+        batch_id=email_row.batch_id,
+        to_email=email_row.to_email,
+        subject=email_row.subject,
+        body=email_row.body,
+        status=email_row.status,
+        approved=email_row.approved,
+        edited=email_row.edited,
+        model_used=email_row.model_used,
+        sent_at=email_row.sent_at,
+        error=email_row.error,
+        account_company=account.company_name if account else None,
+        account_contact=account.contact_name if account else None,
+        account_has_email=bool(account.contact_email) if account else False,
+    )
+
+
+@app.post("/api/outreach/import/preview", response_model=OutreachImportPreviewOut)
+async def outreach_import_preview(
+    file: Optional[UploadFile] = File(None),
+    google_sheet_url: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    import lead_import
+    try:
+        if file is not None:
+            content = await file.read()
+            result = lead_import.preview(content, file.filename, db)
+        elif google_sheet_url:
+            result = lead_import.preview_google_sheet(google_sheet_url, db)
+        else:
+            raise HTTPException(status_code=400, detail="Upload a file or provide a Google Sheet link.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@app.post("/api/outreach/import/commit", response_model=OutreachImportCommitOut)
+def outreach_import_commit(
+    body: OutreachImportCommitRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    import lead_import
+    result = lead_import.commit(body.rows, body.source_filename, db, dedupe=body.dedupe)
+    log_action(db, "outreach_leads_imported", details=json.dumps({
+        "source": body.source_filename, "created": result["created"], "updated": result["updated"],
+    }))
+    return result
+
+
+@app.post("/api/outreach/generate")
+def outreach_generate(
+    body: OutreachGenerateRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    accounts = db.query(Account).filter(Account.id.in_(body.account_ids)).all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="No matching accounts found.")
+
+    model = body.model or settings.OUTREACH_MODEL
+    batch = OutreachBatch(
+        method=body.method,
+        status="generating",
+        model_used=model,
+        lead_count=len(accounts),
+    )
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+
+    import outreach_generator as og
+
+    if body.method == "batch_api":
+        try:
+            openai_batch_id = og.submit_batch(accounts, model=model)
+            batch.openai_batch_id = openai_batch_id
+        except Exception as e:
+            batch.status = "failed"
+            batch.error = str(e)
+        db.commit()
+        db.refresh(batch)
+        log_action(db, "outreach_batch_submitted", details=json.dumps(
+            {"batch_id": batch.id, "method": "batch_api", "count": len(accounts)}))
+        return {"batch": OutreachBatchOut.model_validate(batch), "emails": []}
+
+    # sync mode — generate immediately
+    try:
+        results = og.generate_sync(accounts, model=model)
+    except Exception as e:
+        batch.status = "failed"
+        batch.error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+
+    accounts_by_id = {a.id: a for a in accounts}
+    created_emails = []
+    generated_count = 0
+    for r in results:
+        acc = accounts_by_id.get(r["account_id"])
+        row = OutreachEmail(
+            account_id=r["account_id"],
+            batch_id=batch.id,
+            to_email=acc.contact_email if acc else None,
+            subject=r["subject"],
+            body=r["body"],
+            status="draft",
+            model_used=r["model_used"],
+            error=r["error"],
+        )
+        db.add(row)
+        if not r["error"]:
+            generated_count += 1
+        created_emails.append(row)
+
+    batch.status = "ready"
+    batch.generated_count = generated_count
+    db.commit()
+    for row in created_emails:
+        db.refresh(row)
+    db.refresh(batch)
+
+    log_action(db, "outreach_generated", details=json.dumps(
+        {"batch_id": batch.id, "method": "sync", "generated": generated_count, "total": len(accounts)}))
+
+    emails_out = [_outreach_email_to_out(row, accounts_by_id.get(row.account_id)) for row in created_emails]
+    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out}
+
+
+@app.get("/api/outreach/batches", response_model=List[OutreachBatchOut])
+def outreach_list_batches(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    return db.query(OutreachBatch).order_by(desc(OutreachBatch.created_at)).all()
+
+
+@app.get("/api/outreach/batches/{batch_id}")
+def outreach_get_batch(batch_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    batch = db.query(OutreachBatch).filter(OutreachBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    emails = db.query(OutreachEmail).filter(OutreachEmail.batch_id == batch_id).all()
+    account_ids = [e.account_id for e in emails]
+    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
+                       if account_ids else {})
+    return {
+        "batch": OutreachBatchOut.model_validate(batch),
+        "emails": [_outreach_email_to_out(e, accounts_by_id.get(e.account_id)) for e in emails],
+    }
+
+
+@app.post("/api/outreach/batches/{batch_id}/refresh")
+def outreach_refresh_batch(batch_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    batch = db.query(OutreachBatch).filter(OutreachBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if batch.method != "batch_api" or not batch.openai_batch_id:
+        raise HTTPException(status_code=400, detail="This batch was not submitted via the Batch API.")
+    if batch.status == "ready":
+        return {"batch": OutreachBatchOut.model_validate(batch), "emails": []}
+
+    import outreach_generator as og
+    try:
+        poll = og.poll_batch(batch.openai_batch_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not poll OpenAI batch: {e}")
+
+    if poll["results"] is None:
+        if poll["status"] in ("failed", "expired", "cancelled"):
+            batch.status = "failed"
+            batch.error = f"OpenAI batch {poll['status']}"
+        db.commit()
+        db.refresh(batch)
+        return {"batch": OutreachBatchOut.model_validate(batch), "emails": []}
+
+    account_ids = [r["account_id"] for r in poll["results"] if r["account_id"]]
+    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
+                       if account_ids else {})
+    created_emails = []
+    generated_count = 0
+    for r in poll["results"]:
+        acc_id = r["account_id"]
+        if not acc_id:
+            continue
+        acc = accounts_by_id.get(acc_id)
+        row = OutreachEmail(
+            account_id=acc_id,
+            batch_id=batch.id,
+            to_email=acc.contact_email if acc else None,
+            subject=r["subject"],
+            body=r["body"],
+            status="draft",
+            model_used=batch.model_used,
+            error=r["error"],
+        )
+        db.add(row)
+        if not r["error"]:
+            generated_count += 1
+        created_emails.append(row)
+
+    batch.status = "ready"
+    batch.generated_count = generated_count
+    db.commit()
+    for row in created_emails:
+        db.refresh(row)
+    db.refresh(batch)
+
+    log_action(db, "outreach_batch_ingested", details=json.dumps({"batch_id": batch.id, "generated": generated_count}))
+    emails_out = [_outreach_email_to_out(row, accounts_by_id.get(row.account_id)) for row in created_emails]
+    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out}
+
+
+@app.get("/api/outreach/emails", response_model=List[OutreachEmailOut])
+def outreach_list_emails(
+    status: Optional[str] = Query(None),
+    batch_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    q = db.query(OutreachEmail)
+    if status:
+        q = q.filter(OutreachEmail.status == status)
+    if batch_id:
+        q = q.filter(OutreachEmail.batch_id == batch_id)
+    if account_id:
+        q = q.filter(OutreachEmail.account_id == account_id)
+    rows = q.order_by(desc(OutreachEmail.created_at)).all()
+    account_ids = [r.account_id for r in rows]
+    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
+                       if account_ids else {})
+    return [_outreach_email_to_out(r, accounts_by_id.get(r.account_id)) for r in rows]
+
+
+@app.patch("/api/outreach/emails/{email_id}", response_model=OutreachEmailOut)
+def outreach_update_email(
+    email_id: int,
+    body: OutreachEmailUpdate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    row = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Outreach email not found")
+    if row.status not in ("draft", "approved"):
+        raise HTTPException(status_code=400, detail=f"Cannot edit an email with status '{row.status}'.")
+    if body.subject is not None and body.subject != row.subject:
+        row.subject = body.subject
+        row.edited = True
+    if body.body is not None and body.body != row.body:
+        row.body = body.body
+        row.edited = True
+    if body.approved is not None:
+        row.approved = body.approved
+        row.status = "approved" if body.approved else "draft"
+    db.commit()
+    db.refresh(row)
+    account = db.query(Account).filter(Account.id == row.account_id).first()
+    return _outreach_email_to_out(row, account)
+
+
+@app.post("/api/outreach/emails/{email_id}/approve", response_model=OutreachEmailOut)
+def outreach_approve_email(email_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    row = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Outreach email not found")
+    row.approved = True
+    row.status = "approved"
+    db.commit()
+    db.refresh(row)
+    account = db.query(Account).filter(Account.id == row.account_id).first()
+    return _outreach_email_to_out(row, account)
+
+
+@app.post("/api/outreach/emails/{email_id}/unapprove", response_model=OutreachEmailOut)
+def outreach_unapprove_email(email_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    row = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Outreach email not found")
+    if row.status in ("sent", "sending"):
+        raise HTTPException(status_code=400, detail="Cannot unapprove an email that has already been sent.")
+    row.approved = False
+    row.status = "draft"
+    db.commit()
+    db.refresh(row)
+    account = db.query(Account).filter(Account.id == row.account_id).first()
+    return _outreach_email_to_out(row, account)
+
+
+@app.post("/api/outreach/emails/bulk-approve", response_model=List[OutreachEmailOut])
+def outreach_bulk_approve(body: OutreachIdList, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    rows = db.query(OutreachEmail).filter(OutreachEmail.id.in_(body.ids)).all()
+    for row in rows:
+        if row.status == "draft":
+            row.approved = True
+            row.status = "approved"
+    db.commit()
+    account_ids = [r.account_id for r in rows]
+    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
+                       if account_ids else {})
+    for row in rows:
+        db.refresh(row)
+    log_action(db, "outreach_bulk_approved", details=json.dumps({"count": len(rows)}))
+    return [_outreach_email_to_out(r, accounts_by_id.get(r.account_id)) for r in rows]
+
+
+@app.post("/api/outreach/emails/{email_id}/send", response_model=OutreachSendResult)
+def outreach_send_one(email_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    row = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Outreach email not found")
+    account = db.query(Account).filter(Account.id == row.account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Linked account not found")
+    import outreach_sender
+    result = outreach_sender.send_outreach_email(row, account, db)
+    action = "outreach_sent" if (result.get("ok") and not result.get("dry_run")) else \
+             "outreach_dry_run" if result.get("ok") else "outreach_send_failed"
+    log_action(db, action, details=json.dumps(
+        {"email_id": row.id, "account_id": account.id, "error": result.get("error")}))
+    return OutreachSendResult(id=row.id, **{k: v for k, v in result.items() if k in ("ok", "dry_run", "sent_to", "error")})
+
+
+@app.post("/api/outreach/send", response_model=OutreachSendOut)
+def outreach_send_bulk(body: OutreachIdList, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    import time
+    import outreach_sender
+    rows = db.query(OutreachEmail).filter(OutreachEmail.id.in_(body.ids)).all()
+    account_ids = [r.account_id for r in rows]
+    accounts_by_id = ({a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
+                       if account_ids else {})
+
+    results = []
+    sent_count, dry_run_count, failed_count = 0, 0, 0
+    for i, row in enumerate(rows):
+        account = accounts_by_id.get(row.account_id)
+        if not account:
+            results.append(OutreachSendResult(id=row.id, ok=False, error="Linked account not found"))
+            failed_count += 1
+            continue
+        result = outreach_sender.send_outreach_email(row, account, db)
+        if result.get("ok") and result.get("dry_run"):
+            dry_run_count += 1
+        elif result.get("ok"):
+            sent_count += 1
+        else:
+            failed_count += 1
+        results.append(OutreachSendResult(
+            id=row.id, **{k: v for k, v in result.items() if k in ("ok", "dry_run", "sent_to", "error")}))
+        if i < len(rows) - 1:
+            time.sleep(0.6)  # throttle between sends
+
+    log_action(db, "outreach_bulk_send", details=json.dumps({
+        "requested": len(body.ids), "sent": sent_count, "dry_run": dry_run_count, "failed": failed_count,
+    }))
+    return OutreachSendOut(results=results)
+
+
 # ─── Go/No-Go Assessment (Build 03) ─────────────────────────────────────────
 
 @app.post("/api/opportunities/{opportunity_id}/gonogo", response_model=GoNoGoOut)
@@ -1218,7 +1589,7 @@ def ms_auth_login():
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
-SECRET_KEYS = {"OPENAI_API_KEY", "IMAP_PASSWORD", "SMTP_PASSWORD", "MS_CLIENT_SECRET"}
+SECRET_KEYS = {"OPENAI_API_KEY", "IMAP_PASSWORD", "SMTP_PASSWORD", "MS_CLIENT_SECRET", "OUTREACH_SMTP_PASSWORD"}
 
 DEFAULT_SETTINGS = [
     ("OPENAI_API_KEY", ""),
@@ -1248,6 +1619,18 @@ DEFAULT_SETTINGS = [
     ("SHAREPOINT_SITE", ""),
     ("SHAREPOINT_FOLDER", "Documents ready for Review"),
     ("SHAREPOINT_REVIEWER_EMAIL", "bernedette.atong@faithforgetech.com"),
+    # Bulk cold-email outreach — independent of the packet mailbox above
+    ("OUTREACH_SEND_MODE", "dry_run"),
+    ("OUTREACH_TEST_ADDRESS", ""),
+    ("OUTREACH_FROM_EMAIL", "operations@faithforgetech.com"),
+    ("OUTREACH_FROM_NAME", "Bernedette Atong - FaithForge"),
+    ("OUTREACH_BCC_EMAIL", "Bernedette.atong@faithforgetech.com"),
+    ("OUTREACH_TRANSPORT", "graph"),
+    ("OUTREACH_MODEL", "gpt-4o"),
+    ("OUTREACH_SMTP_HOST", ""),
+    ("OUTREACH_SMTP_PORT", "587"),
+    ("OUTREACH_SMTP_USERNAME", ""),
+    ("OUTREACH_SMTP_PASSWORD", ""),
 ]
 
 

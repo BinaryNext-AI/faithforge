@@ -237,6 +237,97 @@ class ColdEmailOut(BaseModel):
     emails: List[ColdEmailItem]
 
 
+# ─── Bulk Outreach (leads import + cold-email generation + send) ────────────
+
+class OutreachImportPreviewOut(BaseModel):
+    columns: List[str]
+    mapping: dict
+    rows: List[dict]
+    row_count: int
+    duplicate_count: int
+    email_missing_count: int
+
+
+class OutreachImportCommitRequest(BaseModel):
+    rows: List[dict]
+    source_filename: str = "leads.xlsx"
+    dedupe: str = Field(default="skip", pattern="^(skip|update)$")
+
+
+class OutreachImportCommitOut(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    account_ids: List[int]
+
+
+class OutreachGenerateRequest(BaseModel):
+    account_ids: List[int] = Field(..., min_length=1)
+    method: str = Field(default="sync", pattern="^(sync|batch_api)$")
+    model: Optional[str] = None
+
+
+class OutreachBatchOut(BaseModel):
+    id: int
+    created_at: datetime
+    source_filename: Optional[str]
+    method: str
+    status: str
+    openai_batch_id: Optional[str]
+    model_used: Optional[str]
+    lead_count: int
+    generated_count: int
+    error: Optional[str]
+    notes: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class OutreachEmailOut(BaseModel):
+    id: int
+    created_at: datetime
+    account_id: int
+    batch_id: Optional[int]
+    to_email: Optional[str]
+    subject: Optional[str]
+    body: Optional[str]
+    status: str
+    approved: bool
+    edited: bool
+    model_used: Optional[str]
+    sent_at: Optional[datetime]
+    error: Optional[str]
+    account_company: Optional[str] = None
+    account_contact: Optional[str] = None
+    account_has_email: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class OutreachEmailUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    approved: Optional[bool] = None
+
+
+class OutreachIdList(BaseModel):
+    ids: List[int] = Field(..., min_length=1)
+
+
+class OutreachSendResult(BaseModel):
+    id: int
+    ok: bool
+    dry_run: Optional[bool] = None
+    sent_to: Optional[str] = None
+    error: Optional[str] = None
+
+
+class OutreachSendOut(BaseModel):
+    results: List[OutreachSendResult]
+
+
 # ─── Go/No-Go Assessment (Build 03) ──────────────────────────────────────────
 
 class GoNoGoOut(BaseModel):

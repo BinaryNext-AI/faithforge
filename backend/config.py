@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     # Reviewer who receives the packet + is granted explicit access to the SharePoint file
     SHAREPOINT_REVIEWER_EMAIL: str = "bernedette.atong@faithforgetech.com"
 
+    # Bulk cold-email outreach — independent of the packet-notification mailbox above.
+    # Defaults to dry_run so nothing goes to a real prospect until explicitly flipped.
+    OUTREACH_SEND_MODE: str = "dry_run"       # "dry_run" | "live"
+    OUTREACH_TEST_ADDRESS: str = ""           # dry-run recipient; falls back to NOTIFICATION_EMAIL
+    OUTREACH_FROM_EMAIL: str = "operations@faithforgetech.com"
+    OUTREACH_FROM_NAME: str = "Bernedette Atong - FaithForge"
+    OUTREACH_BCC_EMAIL: str = "Bernedette.atong@faithforgetech.com"  # bcc'd on every outreach send, dry-run and live
+    OUTREACH_TRANSPORT: str = "graph"         # "graph" (send-as via existing MS app) | "smtp"
+    OUTREACH_MODEL: str = "gpt-4o"
+    # SMTP fallback, only used if OUTREACH_TRANSPORT="smtp"
+    OUTREACH_SMTP_HOST: str = ""
+    OUTREACH_SMTP_PORT: int = 587
+    OUTREACH_SMTP_USERNAME: str = ""
+    OUTREACH_SMTP_PASSWORD: str = ""
+    OUTREACH_SMTP_USE_TLS: bool = True
+
     # File uploads
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE: int = 52428800  # 50MB

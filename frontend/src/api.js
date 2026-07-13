@@ -105,6 +105,36 @@ export const scoreAccount = (id) => api.post(`/accounts/${id}/score`).then(r => 
 // Cold Email Generator
 export const generateColdEmail = (data) => api.post('/cold-email/generate', data).then(r => r.data)
 
+// Bulk Outreach
+export const outreachPreviewFile = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/outreach/import/preview', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+export const outreachPreviewGoogleSheet = (googleSheetUrl) => {
+  const form = new FormData()
+  form.append('google_sheet_url', googleSheetUrl)
+  return api.post('/outreach/import/preview', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+export const outreachCommitImport = (rows, sourceFilename, dedupe = 'skip') =>
+  api.post('/outreach/import/commit', { rows, source_filename: sourceFilename, dedupe }).then(r => r.data)
+export const outreachGenerate = (accountIds, method = 'sync', model = null) =>
+  api.post('/outreach/generate', { account_ids: accountIds, method, model }, { timeout: 600000 }).then(r => r.data)
+export const outreachGetBatches = () => api.get('/outreach/batches').then(r => r.data)
+export const outreachGetBatch = (id) => api.get(`/outreach/batches/${id}`).then(r => r.data)
+export const outreachRefreshBatch = (id) => api.post(`/outreach/batches/${id}/refresh`).then(r => r.data)
+export const outreachGetEmails = (params = {}) => api.get('/outreach/emails', { params }).then(r => r.data)
+export const outreachUpdateEmail = (id, data) => api.patch(`/outreach/emails/${id}`, data).then(r => r.data)
+export const outreachApproveEmail = (id) => api.post(`/outreach/emails/${id}/approve`).then(r => r.data)
+export const outreachUnapproveEmail = (id) => api.post(`/outreach/emails/${id}/unapprove`).then(r => r.data)
+export const outreachBulkApprove = (ids) => api.post('/outreach/emails/bulk-approve', { ids }).then(r => r.data)
+export const outreachSendOne = (id) => api.post(`/outreach/emails/${id}/send`).then(r => r.data)
+export const outreachSendBulk = (ids) => api.post('/outreach/send', { ids }, { timeout: 300000 }).then(r => r.data)
+
 // Go/No-Go Assessment
 export const scoreGoNoGo = (id) => api.post(`/opportunities/${id}/gonogo`).then(r => r.data)
 

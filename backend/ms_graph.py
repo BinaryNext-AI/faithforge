@@ -214,12 +214,13 @@ class MSGraphClient:
 
     # ── Email sending ─────────────────────────────────────────────────────────
 
-    def send_email(self, to_address, subject: str, html_body: str) -> bool:
-        return self.send_email_with_attachment(to_address, subject, html_body, None, None)
+    def send_email(self, to_address, subject: str, html_body: str, bcc: Optional[str] = None) -> bool:
+        return self.send_email_with_attachment(to_address, subject, html_body, None, None, bcc=bcc)
 
     def send_email_with_attachment(
         self, to_address, subject: str, html_body: str,
-        pdf_path: Optional[str] = None, opportunity: Optional[dict] = None
+        pdf_path: Optional[str] = None, opportunity: Optional[dict] = None,
+        bcc: Optional[str] = None,
     ) -> bool:
         if self.auth_mode == "client_credentials":
             url = f"{GRAPH_BASE}/users/{self.email_address}/sendMail"
@@ -237,6 +238,10 @@ class MSGraphClient:
             "body": {"contentType": "HTML", "content": html_body},
             "toRecipients": [{"emailAddress": {"address": a}} for a in addresses],
         }
+        if bcc:
+            bcc_addresses = [a.strip() for a in bcc.split(",") if a.strip()] if isinstance(bcc, str) else [a for a in bcc if a]
+            if bcc_addresses:
+                message["bccRecipients"] = [{"emailAddress": {"address": a}} for a in bcc_addresses]
 
         if pdf_path and os.path.exists(pdf_path):
             import base64

@@ -51,6 +51,28 @@ const SETTING_GROUPS = [
       NOTIFICATION_EMAIL: 'Where to send completed packets (required)',
     },
   },
+  {
+    title: 'Bulk Outreach Sending — Cold Email at Scale',
+    icon: '📨',
+    keys: [
+      'OUTREACH_SEND_MODE', 'OUTREACH_FROM_EMAIL', 'OUTREACH_FROM_NAME', 'OUTREACH_BCC_EMAIL', 'OUTREACH_TEST_ADDRESS',
+      'OUTREACH_TRANSPORT', 'OUTREACH_MODEL',
+      'OUTREACH_SMTP_HOST', 'OUTREACH_SMTP_PORT', 'OUTREACH_SMTP_USERNAME', 'OUTREACH_SMTP_PASSWORD',
+    ],
+    descriptions: {
+      OUTREACH_SEND_MODE: '"dry_run" (safe — every send routes to the test address below) or "live" (sends to real prospects). Keep dry_run until you are certain.',
+      OUTREACH_FROM_EMAIL: 'The dedicated outreach mailbox — never Bernedette’s personal inbox',
+      OUTREACH_FROM_NAME: 'Display name prospects see, e.g. "Bernedette Atong - FaithForge"',
+      OUTREACH_BCC_EMAIL: 'Bcc\'d on every outreach email sent, dry-run and live (default: Bernedette.atong@faithforgetech.com)',
+      OUTREACH_TEST_ADDRESS: 'Where dry-run sends go instead of the real prospect (falls back to NOTIFICATION_EMAIL if blank)',
+      OUTREACH_TRANSPORT: '"graph" to send-as OUTREACH_FROM_EMAIL via the existing Microsoft Graph app (needs Mail.Send for that mailbox), or "smtp" to use the fields below',
+      OUTREACH_MODEL: 'e.g. gpt-4o (higher quality) or gpt-4o-mini (~15x cheaper)',
+      OUTREACH_SMTP_HOST: 'Only used if OUTREACH_TRANSPORT is "smtp"',
+      OUTREACH_SMTP_PORT: 'Usually 587 for TLS',
+      OUTREACH_SMTP_USERNAME: 'SMTP login for the outreach mailbox',
+      OUTREACH_SMTP_PASSWORD: 'App password for the outreach mailbox',
+    },
+  },
 ]
 
 function SettingInput({ settingKey, value, onChange, isSecret, description }) {
@@ -94,6 +116,7 @@ export default function Settings() {
   const [error, setError] = useState(null)
   const [msStatus, setMsStatus] = useState(null)
   const [msChecking, setMsChecking] = useState(false)
+  const [originalSendMode, setOriginalSendMode] = useState('dry_run')
 
   useEffect(() => {
     getSettings()
@@ -106,6 +129,7 @@ export default function Settings() {
         })
         setSettingsData(map)
         setSecretKeys(secrets)
+        setOriginalSendMode(map.OUTREACH_SEND_MODE || 'dry_run')
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -129,6 +153,16 @@ export default function Settings() {
   }
 
   const handleSave = async () => {
+    const switchingToLive = originalSendMode !== 'live' && settingsData.OUTREACH_SEND_MODE === 'live'
+    if (switchingToLive) {
+      const confirmed = window.confirm(
+        'WARNING: You are switching Bulk Outreach Sending to LIVE mode.\n\n' +
+        'Every approved cold email will be sent to the REAL prospect address instead of the test address. ' +
+        'This cannot be undone once emails are sent.\n\n' +
+        'Are you sure you want to go live?'
+      )
+      if (!confirmed) return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -137,6 +171,7 @@ export default function Settings() {
         if (v) toSend[k] = v
       }
       await updateSettings(toSend)
+      setOriginalSendMode(settingsData.OUTREACH_SEND_MODE || 'dry_run')
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch (e) {

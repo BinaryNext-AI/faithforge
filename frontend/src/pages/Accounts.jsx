@@ -5,7 +5,7 @@ import {
   Building2, Plus, X, Clock, Bell, Upload, FileSpreadsheet, Link as LinkIcon, Users, CheckCircle2,
 } from 'lucide-react'
 import {
-  getAccounts, createAccount,
+  getAccounts, createAccount, deleteAllAccounts,
   outreachPreviewFile, outreachPreviewGoogleSheet, outreachCommitImport,
 } from '../api'
 
@@ -349,6 +349,7 @@ export default function Accounts() {
   const [sort, setSort] = useState('priority')
   const [showAdd, setShowAdd] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -364,6 +365,24 @@ export default function Accounts() {
   }, [stage, segment, search, sort])
 
   useEffect(() => { load() }, [load])
+
+  const handleDeleteAll = async () => {
+    const phrase = window.prompt(
+      `This permanently deletes ALL ${accounts.length} account(s) and any outreach emails tied to them. This cannot be undone.\n\nType DELETE ALL ACCOUNTS to confirm:`
+    )
+    if (phrase === null) return
+    if (phrase.trim() !== 'DELETE ALL ACCOUNTS') {
+      window.alert('Confirmation phrase did not match — nothing was deleted.')
+      return
+    }
+    setDeletingAll(true)
+    try {
+      const r = await deleteAllAccounts(phrase.trim())
+      window.alert(`Deleted ${r.deleted} account(s).`)
+      load()
+    } catch (e) { setError(e.message) }
+    finally { setDeletingAll(false) }
+  }
 
   return (
     <div className="space-y-5">
@@ -382,6 +401,20 @@ export default function Accounts() {
           </button>
         </div>
       </div>
+
+      {accounts.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={handleDeleteAll}
+            disabled={deletingAll}
+            className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"
+            title="Permanently delete every account in this list"
+          >
+            {deletingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Delete all {accounts.length} accounts…
+          </button>
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-2 items-center bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm">

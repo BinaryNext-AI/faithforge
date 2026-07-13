@@ -27,6 +27,7 @@ from schemas import (
     PacketOut, AuditLogOut, DashboardStats, ScanResult, AppSettingOut,
     PacketBuildRequest, CompleteDraftRequest, CompleteDraftOut, RevisePacketRequest,
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
+    AccountDeleteAllRequest, AccountDeleteAllOut,
     ColdEmailRequest, ColdEmailOut,
     GoNoGoOut,
     OutreachImportPreviewOut, OutreachImportCommitRequest, OutreachImportCommitOut,
@@ -1069,6 +1070,25 @@ def update_account_stage(
     db.refresh(acc)
     log_action(db, "account_stage_changed", details=json.dumps({"company": acc.company_name, "from": old, "to": body.stage}))
     return acc
+
+
+@app.delete("/api/accounts", response_model=AccountDeleteAllOut)
+def delete_all_accounts(
+    body: AccountDeleteAllRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Wipes every Account (and their outreach emails via cascade). Requires
+    an exact confirmation phrase so this can never fire by accident."""
+    if body.confirm != "DELETE ALL ACCOUNTS":
+        raise HTTPException(status_code=400, detail='Confirmation phrase must be exactly "DELETE ALL ACCOUNTS".')
+    accounts = db.query(Account).all()
+    count = len(accounts)
+    for acc in accounts:
+        db.delete(acc)  # per-row delete (not bulk .delete()) so the OutreachEmail cascade fires
+    db.commit()
+    log_action(db, "accounts_deleted_all", details=json.dumps({"count": count}))
+    return AccountDeleteAllOut(deleted=count)
 
 
 @app.delete("/api/accounts/{account_id}")

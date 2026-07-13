@@ -100,6 +100,7 @@ export const createAccount = (data) => api.post('/accounts', data).then(r => r.d
 export const updateAccount = (id, data) => api.put(`/accounts/${id}`, data).then(r => r.data)
 export const updateAccountStage = (id, stage) => api.put(`/accounts/${id}/stage`, { stage }).then(r => r.data)
 export const deleteAccount = (id) => api.delete(`/accounts/${id}`).then(r => r.data)
+export const deleteAllAccounts = (confirm) => api.delete('/accounts', { data: { confirm } }).then(r => r.data)
 export const scoreAccount = (id) => api.post(`/accounts/${id}/score`).then(r => r.data)
 
 // Cold Email Generator

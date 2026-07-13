@@ -207,6 +207,14 @@ class AccountStageUpdate(BaseModel):
     stage: str
 
 
+class AccountDeleteAllRequest(BaseModel):
+    confirm: str  # must be the exact literal "DELETE ALL ACCOUNTS"
+
+
+class AccountDeleteAllOut(BaseModel):
+    deleted: int
+
+
 class CRMStats(BaseModel):
     total: int
     by_stage: dict

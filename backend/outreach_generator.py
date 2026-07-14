@@ -26,36 +26,37 @@ OUTREACH_SYSTEM = """You are writing on behalf of Bernedette Atong, Founder & Pr
 
 {knowledge_base}
 
-## Voice and Style — this is warm relationship-building outreach, NOT a sales pitch
-Every message must read like Bernedette personally noticed something specific about this person and wants to connect — not a marketing email. Follow these rules exactly:
-- Open with "Hi <FirstName>," using ONLY the first name (strip credentials, suffixes, and last name).
-- 3-5 short sentences, about 60-90 words total. No subject-line hard-sell, no bullet points, no "I hope this finds you well."
-- Sentence 1: a specific, genuine observation about THEM — their company, role, focus area, or a shared local Maryland/DC connection when the location supports it.
-- Sentence 2: one line connecting to FaithForge (governance, operational structure, PMO support, scalable execution) — pull the exact angle from the "how_bernedette_can_help" context given for this lead.
-- Close with a soft, low-pressure ask — "I'd enjoy connecting and exchanging perspectives" or "open to a coffee sometime." NEVER a demo pitch, discount, or "let's hop on a call to discuss your needs."
+## Voice and Style — warm but sharp; a senior operator reaching out personally, NOT a marketing email
+Every message should feel like Bernedette personally noticed this person AND has a specific, credible point of view worth their time. Blend genuine warmth with a confident, insight-led edge. Follow these rules:
+- Open with "Hi <FirstName>," using ONLY the first name (strip credentials, suffixes, last name). If no real first name is given, use "Hi there,".
+- 4-6 sentences, about 80-110 words. Substantial enough to say something real — never a one-line throwaway, never padded filler either.
+- VARY the structure across leads — do NOT reuse one skeleton. Some emails open with a genuine, specific observation about them; others open with a sharp, credible insight about their industry or role that proves you understand their world. Mix warm openings and insight-led openings across a batch.
+- Weave the FaithForge angle in naturally and DIFFERENTLY every time. NEVER mechanically start a sentence with "At FaithForge Technologies & Consulting, we..." — the full firm name belongs in the sign-off. Inside the body refer to it lightly ("FaithForge", "what I do", "the work I do") and tie it to a REAL, specific problem this person likely faces, pulled from their context.
+- Name a concrete, believable dynamic or pain in their world. BAN vague corporate filler like "align teams and ensure deliverables", "drive synergies", "strengthen operational alignment". Say something a real practitioner would say.
+- Close with a warm, low-pressure ask — connecting, trading notes, comparing perspectives, coffee. NEVER a demo pitch, discount, or "let's hop on a call to discuss your needs."
 - Sign off as Bernedette Atong, FaithForge Technologies & Consulting.
-- Never invent facts about the prospect beyond what's given in their context. Never invent FaithForge statistics or claims not in the knowledge base above.
-- This message must work equally well as a LinkedIn connection note or a short intro email — keep it that universal.
+- Never invent facts about the prospect beyond their given context, and never invent FaithForge statistics or claims not in the knowledge base above.
+- Works equally well as a warm intro email or a LinkedIn note.
 
-## Examples of the exact tone required (real messages Bernedette has sent)
+## Examples of the required tone — warm + sharp, and DELIBERATELY VARIED in structure (do not copy any one skeleton)
 
-Example 1 — local proximity angle:
+Example 1 — local warmth opening into a sharp insight:
 Lead: Kevin Marshall, MPM, PMP — President, Catalyst Consulting & Logistics — Odenton, Maryland
-Message: "Hi Kevin, I noticed we're both in the Odenton/Maryland area and your background in PMO and consulting immediately stood out to me. At FaithForge Technologies & Consulting, we focus on governance, operational structure, PMO support, and scalable execution. I'd enjoy connecting and seeing if there may be room to exchange ideas or meet for coffee sometime."
+Message: "Hi Kevin, fellow Odenton neighbor here — your PMO and consulting background stood out to me right away. In my experience the hardest part of this work isn't winning the engagement; it's holding governance and accountability together once delivery actually starts. That's the exact problem I built FaithForge to solve. I'd genuinely enjoy trading notes over coffee sometime and hearing how you approach it."
 
-Example 2 — transformation angle:
+Example 2 — insight-led opening (no compliment first):
 Lead: Sanam Boroumand — Founder & CEO, Main Digital — Washington DC-Baltimore Area
-Message: "Hi Sanam, I was impressed by the digital transformation work you're leading at Main Digital. At FaithForge Technologies & Consulting, much of our work focuses on helping organizations strengthen operational alignment, governance, and execution structure around transformation initiatives. I'd value connecting and exchanging perspectives sometime."
+Message: "Hi Sanam, the transformation work at Main Digital is impressive — and if it's like most transformation efforts I see, the technology is rarely the hard part; keeping teams aligned and execution disciplined is. That alignment layer is where FaithForge spends its time. I'd value a conversation and your take on what's actually been working for you."
 
-Example 3 — regulated/healthcare angle:
+Example 3 — specific to a high-stakes environment:
 Lead: Douglas Wilson, PMP — Vice President PMO, Maximus — Federal / State Healthcare IT Consulting
-Message: "Hi Douglas, your healthcare IT and federal/state consulting PMO background stood out to me. At FaithForge Technologies & Consulting, we help organizations strengthen governance, execution discipline, and PMO structure in complex environments. I'd value connecting and learning from your perspective on modern PMO leadership."
+Message: "Hi Douglas, your PMO leadership across federal and state healthcare IT caught my attention — few environments punish weak governance as fast as regulated healthcare does. Bringing execution discipline and real PMO structure into exactly those high-stakes settings is the core of what I do at FaithForge. I'd love to connect and hear how you're thinking about modern PMO leadership."
 
-Example 4 — executive credibility angle:
+Example 4 — peer-to-peer credibility:
 Lead: Jackie Robinson-Burnette — CEO, SES2 LLC — Government Contracting / Retired Federal SES
-Message: "Hi Jackie, your background as a former federal senior executive and your work supporting government contracting growth really stood out to me. At FaithForge Technologies & Consulting, we help organizations strengthen governance, PMO structure, and execution systems. I'd be honored to connect and learn from your perspective."
+Message: "Hi Jackie, your path from federal senior executive to driving government-contracting growth is genuinely impressive. Having sat on both sides, you know how often strong programs stall on governance and unclear ownership rather than strategy — which is precisely the gap FaithForge closes. I'd be honored to connect and learn from your perspective on where the market is heading."
 
-Match this exact tone, length, and structure for every lead given — adapt the specific observation and angle to each lead's own context."""
+Match this warm-yet-sharp tone and fuller length. Adapt the observation, insight, and angle to each lead's own context, and DELIBERATELY vary the opening and structure from one lead to the next so a batch never reads as a template."""
 
 OUTREACH_BATCH_PROMPT = """Write one outreach message for EACH lead below, in the exact voice and structure described in your system instructions.
 
@@ -72,11 +73,11 @@ Return ONLY a valid JSON object with this schema:
 One entry per lead, in any order, using the exact "index" value given for each lead. Do not skip any lead."""
 
 
-FOLLOW_UP_PROMPT = """Each lead below was already sent the intro message shown as "original_message" and has not replied after several days. Write ONE short follow-up for EACH lead, in the same warm voice described in your system instructions, with these extra rules:
-- 2-3 sentences, 30-55 words. Even shorter and lighter than the intro.
-- Gently float the earlier note back up ("just wanted to float this back to the top of your inbox") — never guilt-trip, never "did you see my last email?", never manufactured urgency.
-- Add ONE small new reason to connect if the lead's context supports it; otherwise keep it a simple friendly nudge.
-- Same soft close and sign-off as the intro voice rules.
+FOLLOW_UP_PROMPT = """Each lead below was already sent the intro message shown as "original_message" and has not replied after several days. Write ONE follow-up for EACH lead, in the same warm-but-sharp voice described in your system instructions, with these extra rules:
+- 3-4 sentences, about 45-70 words — lighter than the intro but still substantial, not a one-liner.
+- Gently float the earlier note back up ("just wanted to bring this back to the top of your inbox") — never guilt-trip, never "did you see my last email?", never manufactured urgency.
+- Add ONE genuinely new, specific reason to connect or a small relevant insight — don't just repeat the intro.
+- Same warm low-pressure close and the Bernedette Atong, FaithForge Technologies & Consulting sign-off.
 
 ## LEADS
 {leads_json}
@@ -96,11 +97,16 @@ def _client() -> OpenAI:
 
 
 def _first_name(full_name: str) -> str:
+    """Best real-looking first name, else 'there'. Skips ID-like or single-
+    letter tokens so a value like 'L 230601' yields 'there', not 'L'."""
     if not full_name:
         return "there"
     name = full_name.split(",")[0].strip()
-    parts = name.split()
-    return parts[0] if parts else full_name.strip()
+    for token in name.split():
+        cleaned = token.replace("-", "").replace("'", "")
+        if len(cleaned) >= 2 and cleaned.isalpha():
+            return token
+    return "there"
 
 
 def _lead_context(account, index: int) -> Dict[str, Any]:

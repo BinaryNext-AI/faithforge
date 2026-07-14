@@ -1,10 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail, Ban, Plus, X,
+  ArrowLeft, Loader2, AlertCircle, Trash2, Save, Sparkles, Bell, CheckCircle, Mail, Ban, Plus, X, RefreshCw,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getAccount, updateAccount, updateAccountStage, deleteAccount, scoreAccount } from '../api'
+import { getAccount, updateAccount, updateAccountStage, deleteAccount, scoreAccount, outreachGetEmails } from '../api'
 import { STAGES, SEGMENTS, StageBadge, PriorityPill } from './Accounts'
+
+const OUTREACH_STATUS_STYLES = {
+  draft: 'bg-gray-100 text-gray-600',
+  approved: 'bg-blue-100 text-blue-800',
+  queued: 'bg-indigo-100 text-indigo-700',
+  sending: 'bg-amber-100 text-amber-800',
+  sent: 'bg-emerald-100 text-emerald-800',
+  failed: 'bg-red-100 text-red-700',
+  skipped: 'bg-gray-100 text-gray-500',
+}
 
 // datetime-local wants "YYYY-MM-DDTHH:mm"; the API returns ISO strings.
 const toLocalInput = (iso) => (iso ? new Date(iso).toISOString().slice(0, 16) : '')
@@ -19,6 +29,19 @@ export default function AccountDetail() {
   const [busy, setBusy] = useState(null)
   const [toast, setToast] = useState(null)
   const [customFields, setCustomFields] = useState([])   // [{key, value}]
+  const [outreachEmails, setOutreachEmails] = useState([])
+  const [outreachLoading, setOutreachLoading] = useState(false)
+
+  const loadOutreachHistory = useCallback(async () => {
+    setOutreachLoading(true)
+    try {
+      const rows = await outreachGetEmails({ account_id: id })
+      setOutreachEmails(rows)
+    } catch (e) { /* non-critical — leave history empty on failure */ }
+    finally { setOutreachLoading(false) }
+  }, [id])
+
+  useEffect(() => { loadOutreachHistory() }, [loadOutreachHistory])
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -264,6 +287,44 @@ export default function AccountDetail() {
         <Labeled label="Pain Points"><textarea value={form.pain_points} onChange={set('pain_points')} className="input min-h-16" rows={2} /></Labeled>
         <Labeled label="Entry Offer"><textarea value={form.entry_offer} onChange={set('entry_offer')} className="input min-h-16" rows={2} /></Labeled>
         <Labeled label="Notes"><textarea value={form.notes} onChange={set('notes')} className="input min-h-20" rows={3} /></Labeled>
+      </div>
+
+      {/* Outreach history — every drafted/sent email tied to this account, so
+          "where did my draft go" always has an answer right here. */}
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Outreach History</p>
+          <button onClick={loadOutreachHistory} disabled={outreachLoading} className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-700">
+            <RefreshCw className={`w-3.5 h-3.5 ${outreachLoading ? 'animate-spin' : ''}`} />Refresh
+          </button>
+        </div>
+        {outreachEmails.length === 0 ? (
+          <p className="text-sm text-gray-400">No emails drafted for this contact yet. Click "Draft Email" above to generate one.</p>
+        ) : (
+          <div className="space-y-2">
+            {outreachEmails.map(email => (
+              <button
+                key={email.id}
+                onClick={() => {
+                  const p = new URLSearchParams({ tab: 'single', account_id: id })
+                  navigate(`/outreach?${p.toString()}`)
+                }}
+                className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-sm font-medium text-gray-800 truncate">{email.subject || '(no subject)'}</p>
+                  <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${OUTREACH_STATUS_STYLES[email.status] || 'bg-gray-100 text-gray-600'}`}>
+                    {email.status}{email.is_follow_up ? ' · follow-up' : ''}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400">
+                  {new Date(email.created_at).toLocaleString()}
+                  {email.sent_at && ` · sent ${new Date(email.sent_at).toLocaleString()}`}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Custom fields — anything from an imported spreadsheet that didn't map to a

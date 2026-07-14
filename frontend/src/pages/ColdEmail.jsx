@@ -39,7 +39,7 @@ function StatusBadge({ status }) {
 }
 
 export default function ColdEmail({ embedded = false }) {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const [form, setForm] = useState(() => ({
     ...DEFAULT_FORM,
@@ -91,6 +91,13 @@ export default function ColdEmail({ embedded = false }) {
       const row = await generateColdEmail({ ...form })
       setAccountId(row.account_id)
       setEmails(prev => [row, ...prev])
+      // Persist the account into the URL so a browser refresh reloads these
+      // saved drafts instead of showing a blank page.
+      if (row.account_id) {
+        const next = new URLSearchParams(searchParams)
+        next.set('account_id', String(row.account_id))
+        setSearchParams(next, { replace: true })
+      }
     } catch (err) {
       setError(err.message)
     } finally {

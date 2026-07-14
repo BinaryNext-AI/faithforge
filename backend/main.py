@@ -1222,25 +1222,24 @@ def generate_cold_email_endpoint(
     if acc.do_not_contact:
         raise HTTPException(status_code=400, detail="This contact has opted out (Do Not Contact) — cannot draft or send.")
 
-    from ai_screener import generate_cold_email
+    # Use the SAME generator as Bulk Outreach — it's grounded in real emails
+    # Bernedette actually sent (warm, 60-90 words, soft ask), so single-lead
+    # drafts match that proven voice instead of the older, blunter cold-email
+    # prompt that read as presumptuous.
+    import outreach_generator as og
     try:
-        result = generate_cold_email(
-            company_name=body.company_name, segment=body.segment or "",
-            contact_name=body.contact_name or "", contact_title=body.contact_title or "",
-            pain_points=body.pain_points or "", entry_offer=body.entry_offer or "",
-            sequence_length=1,
-        )
+        results = og.generate_sync([acc])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
 
-    emails = result.get("emails") or []
-    if not emails:
-        raise HTTPException(status_code=500, detail="The model didn't return a usable draft — try again.")
-    drafted = emails[0]
+    if not results or results[0].get("error"):
+        detail = results[0]["error"] if results and results[0].get("error") else "The model didn't return a usable draft — try again."
+        raise HTTPException(status_code=500, detail=detail)
+    drafted = results[0]
 
     row = OutreachEmail(
         account_id=acc.id, subject=drafted.get("subject", ""), body=drafted.get("body", ""),
-        status="draft", model_used="cold-email-single",
+        status="draft", model_used=drafted.get("model_used") or "cold-email-single",
     )
     db.add(row)
     db.commit()

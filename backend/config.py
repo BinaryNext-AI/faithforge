@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     OUTREACH_SEND_SPACING_SECONDS: int = 75
     # Follow-ups: how many days with no reply before a lead is eligible
     OUTREACH_FOLLOW_UP_DAYS: int = 4
+    # 4-touch follow-up cadence: comma-separated days to wait after the PREVIOUS
+    # touch before follow-up 1/2/3 and the breakup (step 4) become due. Stored
+    # as a string (like the other outreach settings above) so it can be
+    # overridden live via AppSetting without a schema change.
+    OUTREACH_SEQUENCE_INTERVALS: str = "3,4,4,4"
     # Apollo.io — used only to look up a verified work email for a lead
     APOLLO_API_KEY: str = ""
     # SMTP fallback, only used if OUTREACH_TRANSPORT="smtp"

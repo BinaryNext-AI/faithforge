@@ -178,6 +178,7 @@ class AccountBase(BaseModel):
     next_action: Optional[str] = None
     next_action_date: Optional[datetime] = None
     awaiting_reply: Optional[bool] = None
+    replied_at: Optional[datetime] = None
     pain_points: Optional[str] = None
     entry_offer: Optional[str] = None
     notes: Optional[str] = None
@@ -275,7 +276,11 @@ class OutreachGenerateRequest(BaseModel):
 
 
 class OutreachFollowUpRequest(BaseModel):
-    days: Optional[int] = None   # min days since last contact; default from settings
+    # Sequence-aware follow-up generation (steps 1-3 via the LLM, step 4 = the
+    # static breakup template). If account_ids is omitted, generation runs for
+    # every account currently due at `step` (see GET /outreach/follow-ups/due).
+    step: int = Field(..., ge=1, le=4)
+    account_ids: Optional[List[int]] = None
     model: Optional[str] = None
 
 
@@ -321,10 +326,12 @@ class OutreachEmailOut(BaseModel):
     sent_at: Optional[datetime]
     error: Optional[str]
     is_follow_up: bool = False
+    sequence_step: int = 0
     account_company: Optional[str] = None
     account_contact: Optional[str] = None
     account_has_email: bool = False
     account_do_not_contact: bool = False
+    account_replied_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

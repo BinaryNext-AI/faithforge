@@ -79,6 +79,9 @@ def _migrate_add_columns():
         _ensure_column(conn, "accounts", "custom_fields", "TEXT")
         _ensure_column(conn, "outreach_emails", "is_follow_up", "BOOLEAN DEFAULT FALSE")
         _ensure_column(conn, "outreach_emails", "was_dry_run", "BOOLEAN DEFAULT FALSE")
+        _ensure_column(conn, "accounts", "replied_at", "TIMESTAMP")
+        _ensure_column(conn, "outreach_emails", "sequence_step", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "outreach_emails", "sent_message_id", "TEXT")
         conn.commit()
 
     # Legacy SQLite-only additions (Postgres deploys were created after these existed).

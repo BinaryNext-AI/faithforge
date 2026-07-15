@@ -136,8 +136,12 @@ export const outreachUnapproveEmail = (id) => api.post(`/outreach/emails/${id}/u
 export const outreachBulkApprove = (ids) => api.post('/outreach/emails/bulk-approve', { ids }).then(r => r.data)
 export const outreachSendOne = (id) => api.post(`/outreach/emails/${id}/send`).then(r => r.data)
 export const outreachSendBulk = (ids) => api.post('/outreach/send', { ids }).then(r => r.data)
-export const outreachGenerateFollowUps = (days = null, model = null) =>
-  api.post('/outreach/follow-ups/generate', { days, model }, { timeout: 600000 }).then(r => r.data)
+export const outreachDetectReplies = () =>
+  api.post('/outreach/detect-replies').then(r => r.data)
+export const outreachFollowUpsDue = () =>
+  api.get('/outreach/follow-ups/due').then(r => r.data)
+export const outreachGenerateFollowUps = (step, accountIds = null, model = null) =>
+  api.post('/outreach/follow-ups/generate', { step, account_ids: accountIds, model }, { timeout: 600000 }).then(r => r.data)
 export const outreachFindEmail = (accountId) =>
   api.post(`/outreach/accounts/${accountId}/find-email`, {}, { timeout: 60000 }).then(r => r.data)
 

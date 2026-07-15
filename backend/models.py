@@ -224,6 +224,7 @@ class Account(Base):
     next_action = Column(Text)
     next_action_date = Column(DateTime)
     awaiting_reply = Column(Boolean, default=False)
+    replied_at = Column(DateTime, nullable=True)  # set once an inbound reply is detected (see reply_detector.py)
 
     # Context for outreach
     pain_points = Column(Text)
@@ -287,6 +288,11 @@ class OutreachEmail(Base):
     error = Column(Text, nullable=True)
     is_follow_up = Column(Boolean, default=False)
     was_dry_run = Column(Boolean, default=False)  # true if the "send" went to the test address
+    # Follow-up sequence position: 0 = initial email, 1-3 = follow-ups, 4 = breakup/close.
+    # Kept in sync with is_follow_up (True whenever sequence_step >= 1).
+    sequence_step = Column(Integer, default=0, index=True)
+    # Message-ID we sent with, for the (optional) reply-threading match in reply_detector.py.
+    sent_message_id = Column(String, nullable=True)
 
     account = relationship("Account", back_populates="outreach_emails")
     batch = relationship("OutreachBatch", back_populates="emails")

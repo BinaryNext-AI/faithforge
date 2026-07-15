@@ -309,6 +309,32 @@ def generate_follow_ups(items: List[Dict[str, Any]], model: str = DEFAULT_MODEL)
     return results
 
 
+SIGNOFF = "Bernedette Atong\nFaithForge Technologies & Consulting"
+
+
+def render_breakup_email(account) -> "tuple[str, str]":
+    """Sequence step 4 — the final, no-reply-after-3-touches close. Deliberately
+    NOT an LLM call: a static, warm, no-pressure template with only
+    {first_name}/{company} merged in, so it never drifts in tone or invents
+    anything. Same real \\n\\n paragraph breaks and sign-off block as every
+    other outreach email."""
+    first_name = _first_name(account.contact_name or "")
+    company = (account.company_name or "").strip()
+    subject = f"Should I close this out, {first_name}?" if first_name != "there" else "Should I close this out?"
+
+    company_line = f" for {company}" if company else ""
+    body = (
+        f"Hi {first_name},\n\n"
+        "Guessing the timing isn't right — totally fine.\n\n"
+        f"In case it's useful down the road{company_line}, here's the short version of what FaithForge does: "
+        "Project Rescue (an independent Assessment, a hands-on Rescue Sprint, or Embedded Rescue Leadership "
+        "for a stalled or at-risk program), plus general delivery and PMO execution support.\n\n"
+        "I'll stop following up here — the door's open, just reply if that ever changes.\n\n"
+        f"{SIGNOFF}"
+    )
+    return subject, body
+
+
 # ── Batch API mode (cheap, async) ────────────────────────────────────────────
 
 def build_batch_jsonl(accounts: List, model: str = DEFAULT_MODEL) -> bytes:

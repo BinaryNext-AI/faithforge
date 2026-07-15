@@ -10,7 +10,10 @@ import {
   outreachGetEmails, outreachUpdateEmail, outreachApproveEmail, outreachUnapproveEmail,
   outreachBulkApprove, outreachSendOne, outreachSendBulk, getSettings,
   outreachGenerateFollowUps, outreachFindEmail, updateAccount,
+  outreachDetectReplies, outreachFollowUpsDue,
 } from '../api'
+
+const SEQUENCE_STEP_LABELS = { 1: 'Follow-up 1', 2: 'Follow-up 2', 3: 'Follow-up 3', 4: 'Breakup' }
 
 const STATUS_STYLES = {
   draft: 'bg-gray-100 text-gray-600',
@@ -72,9 +75,15 @@ export default function BulkOutreach() {
 
   // Extras
   const [genNotice, setGenNotice] = useState(null)          // "N already-contacted leads skipped"
-  const [followUpLoading, setFollowUpLoading] = useState(false)
-  const [followUpNotice, setFollowUpNotice] = useState(null)
   const [findState, setFindState] = useState({})            // emailId -> {loading, email, email_status, message, error}
+
+  // Follow-up sequence panel
+  const [dueTotals, setDueTotals] = useState(null)          // {"1": N, "2": N, "3": N, "4": N}
+  const [dueLoading, setDueLoading] = useState(false)
+  const [followUpLoading, setFollowUpLoading] = useState(null) // which step is generating, or null
+  const [followUpNotice, setFollowUpNotice] = useState(null)
+  const [detectLoading, setDetectLoading] = useState(false)
+  const [detectNotice, setDetectNotice] = useState(null)
 
   useEffect(() => {
     getSettings().then(data => {
@@ -83,7 +92,60 @@ export default function BulkOutreach() {
       setSendMode(map.OUTREACH_SEND_MODE || 'dry_run')
       setOutreachFromEmail(map.OUTREACH_FROM_EMAIL || '')
     }).catch(() => {})
+    refreshDueCounts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ── Follow-up sequence panel ────────────────────────────────────────────
+
+  const refreshDueCounts = async () => {
+    setDueLoading(true)
+    try {
+      const result = await outreachFollowUpsDue()
+      setDueTotals(result.totals || {})
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDueLoading(false)
+    }
+  }
+
+  const handleCheckReplies = async () => {
+    setDetectLoading(true)
+    setDetectNotice(null)
+    setError(null)
+    try {
+      const result = await outreachDetectReplies()
+      setDetectNotice(`${result.newly_flagged || 0} repl${(result.newly_flagged === 1) ? 'y' : 'ies'} found, dropped from sequence (checked ${result.checked || 0} lead${result.checked === 1 ? '' : 's'} awaiting reply).`)
+      await refreshDueCounts()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDetectLoading(false)
+    }
+  }
+
+  const handleGenerateFollowUpStep = async (stepNum) => {
+    setFollowUpLoading(stepNum)
+    setError(null)
+    setFollowUpNotice(null)
+    try {
+      const result = await outreachGenerateFollowUps(stepNum)
+      if (!result.batch) {
+        setFollowUpNotice(result.message || `No leads are due for ${SEQUENCE_STEP_LABELS[stepNum]} right now.`)
+        return
+      }
+      setCurrentBatch(result.batch)
+      setEmails(result.emails || [])
+      setStatusFilter('')
+      setStep('review')
+      await refreshDueCounts()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setFollowUpLoading(null)
+    }
+  }
 
   // ── Upload ──────────────────────────────────────────────────────────────
 
@@ -155,27 +217,6 @@ export default function BulkOutreach() {
       setError(err.message)
     } finally {
       setGenerating(false)
-    }
-  }
-
-  const handleGenerateFollowUps = async () => {
-    setFollowUpLoading(true)
-    setError(null)
-    setFollowUpNotice(null)
-    try {
-      const result = await outreachGenerateFollowUps()
-      if (!result.batch) {
-        setFollowUpNotice(result.message || 'No leads need a follow-up right now.')
-        return
-      }
-      setCurrentBatch(result.batch)
-      setEmails(result.emails || [])
-      setStatusFilter('')
-      setStep('review')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setFollowUpLoading(false)
     }
   }
 
@@ -489,24 +530,53 @@ export default function BulkOutreach() {
         </div>
       )}
 
-      {/* Follow-ups — separate from uploading new leads */}
+      {/* Follow-up sequence — separate from uploading new leads */}
       {step === 'upload' && (
-        <div className="card p-5 flex items-center justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-              <Reply className="w-4 h-4 text-blue-600" />Already sent intros?
-            </p>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Drafts a short, friendly follow-up for every lead you emailed 4+ days ago who hasn't replied.
-              You still review and approve each one before anything is sent.
-            </p>
-            {followUpNotice && <p className="text-xs text-amber-600 mt-1.5">{followUpNotice}</p>}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <Reply className="w-4 h-4 text-blue-600" />Follow-up sequence
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                A 4-touch cadence (3 follow-ups, then a no-pressure breakup) for leads who haven't replied.
+                You still review and approve every draft before anything is sent.
+              </p>
+              {detectNotice && <p className="text-xs text-emerald-600 mt-1.5">{detectNotice}</p>}
+              {followUpNotice && <p className="text-xs text-amber-600 mt-1.5">{followUpNotice}</p>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5">
+                <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
+              </button>
+              <button onClick={handleCheckReplies} disabled={detectLoading} className="btn-secondary text-sm px-4 flex items-center gap-2">
+                {detectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                Check for replies
+              </button>
+            </div>
           </div>
-          <button onClick={handleGenerateFollowUps} disabled={followUpLoading}
-            className="btn-primary text-sm px-4 flex items-center gap-2 shrink-0">
-            {followUpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Reply className="w-4 h-4" />}
-            Generate Follow-ups
-          </button>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map(stepNum => {
+              const count = dueTotals ? (dueTotals[String(stepNum)] || 0) : 0
+              return (
+                <div key={stepNum} className="bg-gray-50 rounded-lg p-3 flex flex-col gap-2">
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{count}</p>
+                    <p className="text-xs text-gray-500">{SEQUENCE_STEP_LABELS[stepNum]} due</p>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateFollowUpStep(stepNum)}
+                    disabled={followUpLoading !== null || count === 0}
+                    className="btn-primary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {followUpLoading === stepNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Reply className="w-3.5 h-3.5" />}
+                    Generate
+                  </button>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -621,7 +691,14 @@ export default function BulkOutreach() {
                     <p className="font-semibold text-sm text-gray-900 truncate">{email.account_company}</p>
                     <span className="text-xs text-gray-400 truncate">{email.account_contact}</span>
                     {email.is_follow_up && (
-                      <span className="shrink-0 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-semibold">FOLLOW-UP</span>
+                      <span className="shrink-0 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-semibold">
+                        {email.sequence_step === 4 ? 'BREAKUP' : `FOLLOW-UP ${email.sequence_step || ''}`.trim()}
+                      </span>
+                    )}
+                    {email.account_replied_at && (
+                      <span className="shrink-0 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-semibold flex items-center gap-1">
+                        <Reply className="w-2.5 h-2.5" />REPLIED
+                      </span>
                     )}
                     {email.account_do_not_contact && (
                       <span className="shrink-0 px-1.5 py-0.5 bg-gray-800 text-white rounded text-[10px] font-semibold flex items-center gap-1">

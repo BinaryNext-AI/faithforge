@@ -6,7 +6,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from fastapi import (
     FastAPI, Depends, HTTPException, UploadFile, File, Form,
@@ -1313,10 +1313,12 @@ def _outreach_email_to_out(email_row: OutreachEmail, account: Optional[Account])
         sent_at=email_row.sent_at,
         error=email_row.error,
         is_follow_up=bool(email_row.is_follow_up),
+        sequence_step=email_row.sequence_step or 0,
         account_company=account.company_name if account else None,
         account_contact=account.contact_name if account else None,
         account_has_email=bool(account.contact_email) if account else False,
         account_do_not_contact=bool(account.do_not_contact) if account else False,
+        account_replied_at=account.replied_at if account else None,
     )
 
 
@@ -1723,85 +1725,198 @@ def outreach_send_bulk(
     )
 
 
+def _sequence_intervals() -> List[int]:
+    """Parse OUTREACH_SEQUENCE_INTERVALS ("3,4,4,4") into 4 ints — days to
+    wait after the PREVIOUS touch before follow-ups 1/2/3 and the breakup
+    (step 4) become due. Falls back to the documented default on any bad
+    override saved via Settings."""
+    raw = settings.OUTREACH_SEQUENCE_INTERVALS or "3,4,4,4"
+    try:
+        vals = [int(x.strip()) for x in str(raw).split(",") if x.strip() != ""]
+    except (TypeError, ValueError):
+        vals = []
+    if len(vals) < 4:
+        vals = (vals + [3, 4, 4, 4])[:4]
+    return vals[:4]
+
+
+def _accounts_due_for_follow_up(db: Session) -> Dict[int, List[Dict]]:
+    """For every account still awaiting a reply (and not opted out / replied),
+    find the next sequence step it's due for based on its latest SENT email
+    and the configured cadence. Returns {step: [due-item dict, ...]}."""
+    intervals = _sequence_intervals()
+    now = datetime.utcnow()
+    grouped: Dict[int, List[Dict]] = {1: [], 2: [], 3: [], 4: []}
+
+    accounts = (db.query(Account)
+                .filter(Account.awaiting_reply.is_(True),
+                        Account.replied_at.is_(None),
+                        Account.do_not_contact.is_(False),
+                        Account.contact_email.isnot(None),
+                        Account.contact_email != "")
+                .all())
+
+    for acc in accounts:
+        last_sent = (db.query(OutreachEmail)
+                     .filter(OutreachEmail.account_id == acc.id,
+                             OutreachEmail.status == "sent")
+                     .order_by(desc(OutreachEmail.sent_at))
+                     .first())
+        if not last_sent or not last_sent.sent_at:
+            continue  # never actually sent an intro yet — nothing to follow up on
+
+        cur_step = last_sent.sequence_step or 0
+        next_step = cur_step + 1
+        if next_step > 4:
+            continue  # sequence exhausted (breakup already sent)
+
+        interval_days = intervals[next_step - 1]
+        if now - last_sent.sent_at < timedelta(days=interval_days):
+            continue  # not due yet
+
+        already = (db.query(OutreachEmail)
+                   .filter(OutreachEmail.account_id == acc.id,
+                           OutreachEmail.sequence_step == next_step)
+                   .first())
+        if already:
+            continue  # don't double-generate this step
+
+        days_waiting = (now - last_sent.sent_at).days
+        grouped[next_step].append({
+            "account_id": acc.id,
+            "company_name": acc.company_name,
+            "contact_name": acc.contact_name,
+            "contact_email": acc.contact_email,
+            "last_sent_at": last_sent.sent_at,
+            "days_waiting": days_waiting,
+        })
+
+    return grouped
+
+
+@app.post("/api/outreach/detect-replies")
+def outreach_detect_replies(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    """Reads the inbox once and flips awaiting_reply/replied_at for any
+    account whose contact replied. Never sends anything."""
+    import reply_detector
+    summary = reply_detector.detect_replies(db)
+    if summary.get("newly_flagged"):
+        log_action(db, "outreach_replies_detected", details=json.dumps(summary))
+    return summary
+
+
+@app.get("/api/outreach/follow-ups/due")
+def outreach_follow_ups_due(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    """Powers the Follow-ups panel: refreshes replies first (so the picture is
+    current), then reports how many leads are due for each sequence step."""
+    import reply_detector
+    detect_summary = reply_detector.detect_replies(db)
+
+    grouped = _accounts_due_for_follow_up(db)
+    totals = {str(step): len(items) for step, items in grouped.items()}
+    return {
+        "due": {str(step): items for step, items in grouped.items()},
+        "totals": totals,
+        "detect_replies": detect_summary,
+    }
+
+
 @app.post("/api/outreach/follow-ups/generate")
 def outreach_generate_follow_ups(
     body: OutreachFollowUpRequest,
     db: Session = Depends(get_db),
     _: None = Depends(require_auth),
 ):
-    """Drafts one short follow-up for every lead who got a real (live) intro
-    N+ days ago and hasn't replied. Drafts only — human approval still required."""
-    try:
-        days = body.days if body.days is not None else int(settings.OUTREACH_FOLLOW_UP_DAYS)
-    except (TypeError, ValueError):
-        days = 4
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    """Drafts step `body.step` (1-3 via the LLM follow-up generator, 4 =
+    the static breakup template) for the given account_ids, or for every
+    account currently due at that step if account_ids is omitted. Drafts
+    only — human approval + the existing send chokepoint still required."""
+    step = body.step
 
-    candidates = (db.query(Account)
-                  .filter(Account.stage == "Contacted",
-                          Account.awaiting_reply.is_(True),
-                          Account.do_not_contact.is_(False),
-                          Account.last_contacted_at <= cutoff)
-                  .all())
+    if body.account_ids:
+        accounts = (db.query(Account)
+                    .filter(Account.id.in_(body.account_ids),
+                            Account.do_not_contact.is_(False))
+                    .all())
+    else:
+        due = _accounts_due_for_follow_up(db)
+        due_ids = [item["account_id"] for item in due.get(step, [])]
+        accounts = db.query(Account).filter(Account.id.in_(due_ids)).all() if due_ids else []
 
-    items = []
-    for acc in candidates:
-        # one follow-up per lead, ever — skip anyone who already has one
-        existing_fu = (db.query(OutreachEmail)
-                       .filter(OutreachEmail.account_id == acc.id,
-                               OutreachEmail.is_follow_up.is_(True),
-                               OutreachEmail.status.notin_(["failed", "skipped"]))
-                       .first())
-        if existing_fu:
-            continue
-        original = (db.query(OutreachEmail)
-                    .filter(OutreachEmail.account_id == acc.id,
-                            OutreachEmail.status == "sent",
-                            OutreachEmail.was_dry_run.is_(False))
-                    .order_by(desc(OutreachEmail.sent_at))
-                    .first())
-        if not original:
-            continue  # only follow up on emails that actually reached the prospect
-        items.append({"account": acc, "original_body": original.body or ""})
-
-    if not items:
+    if not accounts:
         return {"batch": None, "emails": [], "eligible": 0,
-                "message": f"No leads need a follow-up yet (contacted {days}+ days ago, no reply, none pending). Checked {len(candidates)} contacted lead(s)."}
+                "message": f"No leads are due for follow-up step {step} right now."}
+
+    # Never double-generate a step that already has a draft/sent row.
+    eligible_accounts = []
+    for acc in accounts:
+        exists = (db.query(OutreachEmail)
+                  .filter(OutreachEmail.account_id == acc.id,
+                          OutreachEmail.sequence_step == step)
+                  .first())
+        if not exists:
+            eligible_accounts.append(acc)
+
+    if not eligible_accounts:
+        return {"batch": None, "emails": [], "eligible": 0,
+                "message": f"Every requested lead already has a step {step} email."}
 
     model = body.model or settings.OUTREACH_MODEL
-    batch = OutreachBatch(method="follow_up", status="generating", model_used=model, lead_count=len(items))
+    batch = OutreachBatch(method="follow_up", status="generating", model_used=model, lead_count=len(eligible_accounts))
     db.add(batch)
     db.commit()
     db.refresh(batch)
 
-    import outreach_generator as og
-    try:
-        results = og.generate_follow_ups(items, model=model)
-    except Exception as e:
-        batch.status = "failed"
-        batch.error = str(e)
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Follow-up generation failed: {e}")
-
-    accounts_by_id = {item["account"].id: item["account"] for item in items}
+    accounts_by_id = {acc.id: acc for acc in eligible_accounts}
     created, generated_count = [], 0
-    for r in results:
-        acc = accounts_by_id.get(r["account_id"])
-        row = OutreachEmail(
-            account_id=r["account_id"],
-            batch_id=batch.id,
-            to_email=acc.contact_email if acc else None,
-            subject=r["subject"],
-            body=r["body"],
-            status="draft",
-            model_used=r["model_used"],
-            error=r["error"],
-            is_follow_up=True,
-        )
-        db.add(row)
-        if not r["error"]:
+
+    if step == 4:
+        # Breakup/close — NEVER an LLM call, a static merge template.
+        import outreach_generator as og
+        for acc in eligible_accounts:
+            subject, generated_body = og.render_breakup_email(acc)
+            row = OutreachEmail(
+                account_id=acc.id, batch_id=batch.id, to_email=acc.contact_email,
+                subject=subject, body=generated_body, status="draft",
+                model_used="breakup-template", is_follow_up=True, sequence_step=step,
+            )
+            db.add(row)
             generated_count += 1
-        created.append(row)
+            created.append(row)
+    else:
+        # Steps 1-3 — reuse the existing follow-up generator, with the most
+        # recent prior email as context so it doesn't just repeat itself.
+        items = []
+        for acc in eligible_accounts:
+            prior = (db.query(OutreachEmail)
+                     .filter(OutreachEmail.account_id == acc.id,
+                             OutreachEmail.status == "sent")
+                     .order_by(desc(OutreachEmail.sent_at))
+                     .first())
+            items.append({"account": acc, "original_body": (prior.body if prior else "") or ""})
+
+        import outreach_generator as og
+        try:
+            results = og.generate_follow_ups(items, model=model)
+        except Exception as e:
+            batch.status = "failed"
+            batch.error = str(e)
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"Follow-up generation failed: {e}")
+
+        for r in results:
+            acc = accounts_by_id.get(r["account_id"])
+            row = OutreachEmail(
+                account_id=r["account_id"], batch_id=batch.id,
+                to_email=acc.contact_email if acc else None,
+                subject=r["subject"], body=r["body"], status="draft",
+                model_used=r["model_used"], error=r["error"],
+                is_follow_up=True, sequence_step=step,
+            )
+            db.add(row)
+            if not r["error"]:
+                generated_count += 1
+            created.append(row)
 
     batch.status = "ready"
     batch.generated_count = generated_count
@@ -1811,9 +1926,9 @@ def outreach_generate_follow_ups(
     db.refresh(batch)
 
     log_action(db, "outreach_follow_ups_generated", details=json.dumps(
-        {"batch_id": batch.id, "generated": generated_count, "eligible": len(items)}))
+        {"batch_id": batch.id, "step": step, "generated": generated_count, "eligible": len(eligible_accounts)}))
     emails_out = [_outreach_email_to_out(row, accounts_by_id.get(row.account_id)) for row in created]
-    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out, "eligible": len(items)}
+    return {"batch": OutreachBatchOut.model_validate(batch), "emails": emails_out, "eligible": len(eligible_accounts)}
 
 
 @app.post("/api/outreach/accounts/{account_id}/find-email", response_model=OutreachFindEmailOut)
@@ -1958,6 +2073,7 @@ DEFAULT_SETTINGS = [
     ("OUTREACH_DAILY_SEND_CAP", "15"),
     ("OUTREACH_SEND_SPACING_SECONDS", "75"),
     ("OUTREACH_FOLLOW_UP_DAYS", "4"),
+    ("OUTREACH_SEQUENCE_INTERVALS", "3,4,4,4"),
     ("APOLLO_API_KEY", ""),
     ("OUTREACH_SMTP_HOST", ""),
     ("OUTREACH_SMTP_PORT", "587"),

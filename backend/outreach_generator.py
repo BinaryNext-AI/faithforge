@@ -47,34 +47,84 @@ Every message should feel like Bernedette personally noticed this person AND has
 - Never invent facts about the prospect beyond their given context, and never invent FaithForge statistics or claims not in the knowledge base above.
 - Works equally well as a warm intro email or a LinkedIn note.
 
-## Examples of the required tone — warm + sharp, and DELIBERATELY VARIED in structure (do not copy any one skeleton)
+## FORMATTING — this is a hard requirement, not a style preference
+Every "body" must be written as SEPARATE PARAGRAPHS joined by real line breaks (\\n\\n between paragraphs), NEVER one unbroken block of text. Structure every message exactly like this:
+1. Greeting line, alone: "Hi <FirstName>,"
+2. Opening paragraph (1-2 sentences): the personal observation about them, or the insight-led hook.
+3. Body paragraph (2-3 sentences): the specific pain/insight, what it quietly costs in the real world, and where FaithForge fits — grounded in a real FaithForge service from the knowledge base (e.g. Project Rescue's Assessment, Rescue Sprint, or Embedded Leadership) when the lead's context supports a rescue/turnaround angle; otherwise keep it about steady delivery execution.
+4. Closing paragraph (1-2 sentences): the concrete no-strings give, then the micro-ask question.
+5. Sign-off, on its own final two lines: "Bernedette Atong" then "FaithForge Technologies & Consulting" on the line below it.
+A message returned as a single wall of text with no line breaks is WRONG and will be rejected.
+
+## Examples of the required tone AND formatting — warm + sharp, DELIBERATELY VARIED in structure, ALWAYS multi-paragraph (do not copy any one skeleton, but always copy this paragraph shape)
 
 Example 1 — local warmth opening, give-first offer, micro-ask close:
 Lead: Kevin Marshall, MPM, PMP — President, Catalyst Consulting & Logistics — Odenton, Maryland
-Message: "Hi Kevin, fellow Odenton neighbor here — your PMO and consulting background stood out to me right away. In my experience the hardest part of this work isn't winning the engagement; it's holding governance and accountability together once delivery actually starts. I keep a short list of the five governance questions I run on every stalled program — happy to send it over, no strings, since you'd put it to better use than most. Want me to share it?"
+Message:
+Hi Kevin,
+
+Fellow Odenton neighbor here — your PMO and consulting background stood out to me right away.
+
+In my experience the hardest part of this work isn't winning the engagement; it's holding governance and accountability together once delivery actually starts. That's exactly the gap a focused rescue assessment is built to close before it becomes a bigger problem.
+
+I keep a short list of the five governance questions I run on every stalled program — happy to send it over, no strings. Want me to share it?
+
+Bernedette Atong
+FaithForge Technologies & Consulting
 
 Example 2 — insight-led opening with a light credibility touch:
 Lead: Sanam Boroumand — Founder & CEO, Main Digital — Washington DC-Baltimore Area
-Message: "Hi Sanam, the transformation work at Main Digital is impressive — and if it's like most transformation efforts I've led over eight years in government and healthcare programs, the technology is rarely the hard part; keeping teams aligned once delivery starts is. Most stalled rollouts quietly lose their best people before they miss a deadline. That alignment layer is exactly where FaithForge spends its time. Open to swapping notes on what's actually working for you?"
+Message:
+Hi Sanam,
 
-Example 3 — specific to a high-stakes environment:
+The transformation work at Main Digital is impressive.
+
+If it's like most transformation efforts I've led over eight years in government and healthcare programs, the technology is rarely the hard part — keeping teams aligned once delivery starts is. Most stalled rollouts quietly lose their best people before they miss a deadline, and that alignment layer is exactly where FaithForge spends its time.
+
+Open to swapping notes on what's actually working for you?
+
+Bernedette Atong
+FaithForge Technologies & Consulting
+
+Example 3 — specific to a high-stakes environment, referencing a real engagement model:
 Lead: Douglas Wilson, PMP — Vice President PMO, Maximus — Federal / State Healthcare IT Consulting
-Message: "Hi Douglas, your PMO leadership across federal and state healthcare IT caught my attention — few environments punish weak governance as fast as regulated healthcare does. Bringing execution discipline and real PMO structure into exactly those high-stakes settings is the core of what I do at FaithForge. I'd love to connect and hear how you're thinking about modern PMO leadership."
+Message:
+Hi Douglas,
+
+Your PMO leadership across federal and state healthcare IT caught my attention — few environments punish weak governance as fast as regulated healthcare does.
+
+Bringing execution discipline and real PMO structure into exactly those high-stakes settings is the core of what I do. A short, independent assessment is usually enough to surface where the real risk sits before it turns into a missed milestone.
+
+I'd love to send over what that typically looks like — worth a look?
+
+Bernedette Atong
+FaithForge Technologies & Consulting
 
 Example 4 — peer-to-peer credibility:
 Lead: Jackie Robinson-Burnette — CEO, SES2 LLC — Government Contracting / Retired Federal SES
-Message: "Hi Jackie, your path from federal senior executive to driving government-contracting growth is genuinely impressive. Having sat on both sides, you know how often strong programs stall on governance and unclear ownership rather than strategy — which is precisely the gap FaithForge closes. I'd be honored to connect and learn from your perspective on where the market is heading."
+Message:
+Hi Jackie,
 
-Match this warm-yet-sharp tone and fuller length. Adapt the observation, insight, and angle to each lead's own context, and DELIBERATELY vary the opening and structure from one lead to the next so a batch never reads as a template."""
+Your path from federal senior executive to driving government-contracting growth is genuinely impressive.
+
+Having sat on both sides, you know how often strong programs stall on governance and unclear ownership rather than strategy — which is precisely the gap FaithForge closes for clients in your world.
+
+I'd be glad to send over a short read on what that looks like in practice. Worth a look?
+
+Bernedette Atong
+FaithForge Technologies & Consulting
+
+Match this warm-yet-sharp tone, fuller length, AND the exact multi-paragraph shape above (greeting alone, 2-3 body paragraphs, sign-off on its own two lines). Adapt the observation, insight, and angle to each lead's own context, and DELIBERATELY vary the opening and structure from one lead to the next so a batch never reads as a template — but NEVER vary away from the paragraph breaks."""
 
 OUTREACH_BATCH_PROMPT = """Write one outreach message for EACH lead below, in the exact voice described in your system instructions.
 
 Hard requirements for every message (re-read your system instructions before writing):
-- EXACTLY 6 sentences, structured as: (1) personal opening about them, (2) a sharp insight about their specific pain, (3) how that insight plays out in the real world / what it quietly costs, (4) one light line on where FaithForge fits, (5) a concrete no-strings give, (6) a micro-ask question. Messages with fewer than 5 sentences are rejected.
+- FORMATTING IS MANDATORY: the "body" string must contain real \\n\\n line breaks between (1) the "Hi Name," greeting alone on its own line, (2) 2-3 body paragraphs, (3) a sign-off block of "Bernedette Atong" then "FaithForge Technologies & Consulting" on the next line. A single unbroken paragraph with no line breaks is an AUTOMATIC REJECT — match the multi-paragraph shape in the examples exactly.
+- EXACTLY 6 sentences across those body paragraphs, structured as: (1) personal opening about them, (2) a sharp insight about their specific pain, (3) how that insight plays out in the real world / what it quietly costs, (4) one light line on where FaithForge fits (ground it in a real FaithForge service — e.g. Project Rescue's Assessment, Rescue Sprint, or Embedded Leadership — when it fits the lead's context), (5) a concrete no-strings give, (6) a micro-ask question. Messages with fewer than 5 sentences are rejected.
 - One genuinely useful give (an insight or a concrete no-strings offer to share something specific).
 - One micro-ask question at the end, answerable in a word.
 - Zero sales-speak ("specialize", "leverage", "solutions", "I'm here to help") — write like a peer, not a vendor.
-- Vary each message's opening and structure from the others in this batch.
+- Vary each message's opening and structure from the others in this batch — but never vary away from the paragraph-break formatting.
 
 ## LEADS
 {leads_json}
@@ -90,6 +140,7 @@ One entry per lead, in any order, using the exact "index" value given for each l
 
 
 FOLLOW_UP_PROMPT = """Each lead below was already sent the intro message shown as "original_message" and has not replied after several days. Write ONE follow-up for EACH lead, in the same warm-but-sharp voice described in your system instructions, with these extra rules:
+- FORMATTING IS MANDATORY, same as the intro: real \\n\\n line breaks between the "Hi Name," greeting alone, 1-2 body paragraphs, and a sign-off block of "Bernedette Atong" then "FaithForge Technologies & Consulting" on the next line. Never one unbroken paragraph.
 - 3-4 sentences, about 45-70 words — lighter than the intro but still substantial, not a one-liner.
 - Gently float the earlier note back up ("just wanted to bring this back to the top of your inbox") — never guilt-trip, never "did you see my last email?", never manufactured urgency.
 - Add ONE genuinely new, specific reason to connect or a small relevant insight — don't just repeat the intro.
@@ -139,7 +190,9 @@ def _lead_context(account, index: int) -> Dict[str, Any]:
 
 
 def _system_prompt() -> str:
-    kb = load_kb("company_profile", "bernedette_bio", "target_market")
+    # service_lines.md is outreach-only — never added to DEFAULT_KB_FILES,
+    # so proposal generation (packet_builder.py's bare load_kb()) never sees it.
+    kb = load_kb("company_profile", "bernedette_bio", "target_market", "service_lines")
     return OUTREACH_SYSTEM.format(knowledge_base=kb)
 
 

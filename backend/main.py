@@ -544,6 +544,82 @@ def _send_scan_notification(result: dict):
     srv.quit()
 
 
+def _send_reply_alert(accounts: list):
+    """Alert the team when a cold-outreach lead replies, so someone can answer
+    personally. These leads are already auto-dropped from the follow-up
+    sequence — this is purely a 'go respond to them' nudge. Reuses the same
+    NOTIFICATION_EMAIL + Graph/SMTP transport as the scan notification."""
+    if not settings.NOTIFICATION_EMAIL or not accounts:
+        return
+    n = len(accounts)
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{(a.contact_name or "—")}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">{(a.company_name or "—")}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;"><a href="mailto:{a.contact_email}">{a.contact_email}</a></td>'
+        f'</tr>'
+        for a in accounts
+    )
+    subject = f"FaithForge: {n} outreach {'reply' if n == 1 else 'replies'} — please respond"
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{ font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; color: #1f2937; }}
+  .header {{ background: #16a34a; color: white; padding: 20px 24px; border-radius: 8px; margin-bottom: 20px; }}
+  .header h1 {{ margin: 0; font-size: 18px; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }}
+  th {{ text-align: left; padding: 8px 12px; background: #f9fafb; border-bottom: 2px solid #e5e7eb; font-size: 12px; color: #6b7280; text-transform: uppercase; }}
+</style></head>
+<body>
+<div class="header"><h1>{n} prospect{'' if n == 1 else 's'} replied to your outreach</h1></div>
+<p>The lead{'' if n == 1 else 's'} below wrote back. They've been automatically taken off the follow-up sequence, so no more automated emails will go to them — just reply personally from the outreach inbox.</p>
+<table>
+  <thead><tr><th>Contact</th><th>Company</th><th>Email</th></tr></thead>
+  <tbody>{rows}</tbody>
+</table>
+<p style="font-size:12px;color:#9ca3af;margin-top:24px;">Detected {datetime.utcnow().strftime('%B %d, %Y at %H:%M UTC')}</p>
+</body></html>"""
+
+    try:
+        from ms_graph import get_graph_client
+        graph = get_graph_client()
+        if graph:
+            graph.send_email(settings.NOTIFICATION_EMAIL, subject, html)
+            return
+        if not settings.SMTP_HOST:
+            return
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        import smtplib
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["To"] = settings.NOTIFICATION_EMAIL
+        msg.attach(MIMEText(html, "html"))
+        if settings.SMTP_USE_TLS:
+            srv = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            srv.ehlo(); srv.starttls()
+        else:
+            srv = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT)
+        if settings.SMTP_USERNAME:
+            srv.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        srv.sendmail(settings.SMTP_FROM_EMAIL, settings.NOTIFICATION_EMAIL, msg.as_string())
+        srv.quit()
+    except Exception as e:
+        logger.warning("Reply-alert email failed: %s", e)
+
+
+def _alert_new_replies(db: Session, summary: dict):
+    """If detect_replies flagged new replies, email the team the list. Safe to
+    call from any endpoint that runs detect_replies — a reply only flips once,
+    so the alert fires exactly once per lead regardless of what triggered it."""
+    ids = summary.get("replied") or []
+    if not ids:
+        return
+    accounts = db.query(Account).filter(Account.id.in_(ids)).all()
+    _send_reply_alert(accounts)
+
+
 @app.post("/api/scan/email")
 def scan_email(
     background_tasks: BackgroundTasks,
@@ -1802,6 +1878,7 @@ def outreach_detect_replies(db: Session = Depends(get_db), _: None = Depends(req
     summary = reply_detector.detect_replies(db)
     if summary.get("newly_flagged"):
         log_action(db, "outreach_replies_detected", details=json.dumps(summary))
+        _alert_new_replies(db, summary)
     return summary
 
 
@@ -1811,6 +1888,9 @@ def outreach_follow_ups_due(db: Session = Depends(get_db), _: None = Depends(req
     current), then reports how many leads are due for each sequence step."""
     import reply_detector
     detect_summary = reply_detector.detect_replies(db)
+    if detect_summary.get("newly_flagged"):
+        log_action(db, "outreach_replies_detected", details=json.dumps(detect_summary))
+        _alert_new_replies(db, detect_summary)
 
     grouped = _accounts_due_for_follow_up(db)
     totals = {str(step): len(items) for step, items in grouped.items()}

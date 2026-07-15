@@ -190,9 +190,10 @@ def _lead_context(account, index: int) -> Dict[str, Any]:
 
 
 def _system_prompt() -> str:
-    # service_lines.md is outreach-only — never added to DEFAULT_KB_FILES,
-    # so proposal generation (packet_builder.py's bare load_kb()) never sees it.
-    kb = load_kb("company_profile", "bernedette_bio", "target_market", "service_lines")
+    # service_lines.md and voice_reference.md are outreach-only — never added
+    # to DEFAULT_KB_FILES, so proposal generation (packet_builder.py's bare
+    # load_kb()) never sees them.
+    kb = load_kb("company_profile", "bernedette_bio", "target_market", "service_lines", "voice_reference")
     return OUTREACH_SYSTEM.format(knowledge_base=kb)
 
 

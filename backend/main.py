@@ -1977,7 +1977,7 @@ def outreach_generate_follow_ups(
 
         import outreach_generator as og
         try:
-            results = og.generate_follow_ups(items, model=model)
+            results = og.generate_follow_ups(items, model=model, step=step)
         except Exception as e:
             batch.status = "failed"
             batch.error = str(e)

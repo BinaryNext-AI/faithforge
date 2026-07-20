@@ -139,11 +139,35 @@ Return ONLY a valid JSON object with this schema:
 One entry per lead, in any order, using the exact "index" value given for each lead. Do not skip any lead."""
 
 
+FOLLOW_UP_ANGLE_BY_STEP = {
+    1: (
+        "This is follow-up #1. Lead with ONE genuinely new, specific angle or value point they "
+        "haven't heard yet — a different way into the same problem than the intro used. Do NOT "
+        "open with a content-free bump like \"just wanted to bring this back to the top of your "
+        "inbox\" or \"just checking in\" — get straight to the new point in the first sentence."
+    ),
+    2: (
+        "This is follow-up #2. Lead with a short, concrete proof point using ONE REAL result from the "
+        "case studies in the knowledge base — the real client name and the real stat, exactly as given "
+        "(e.g. an 80% reduction, an 86% cycle-time improvement — whichever real case study is the closest "
+        "fit to this lead's world). Pick whichever real case study is the closest fit; if truly none fit, "
+        "use a qualitative point about FaithForge's approach instead — NEVER invent a client name, a "
+        "percentage, or any stat that is not literally present in the knowledge base. No throat-clearing "
+        "opener — get to the proof point immediately."
+    ),
+    3: (
+        "This is follow-up #3, the last nudge before a final close. Make it easier to say yes: shrink "
+        "the ask to one quick, low-effort question (e.g. a single yes/no, or offering two concrete "
+        "times) rather than repeating the earlier pitch. Keep it the shortest of the three."
+    ),
+}
+
 FOLLOW_UP_PROMPT = """Each lead below was already sent the intro message shown as "original_message" and has not replied after several days. Write ONE follow-up for EACH lead, in the same warm-but-sharp voice described in your system instructions, with these extra rules:
 - FORMATTING IS MANDATORY, same as the intro: real \\n\\n line breaks between the "Hi Name," greeting alone, 1-2 body paragraphs, and a sign-off block of "Bernedette Atong" then "FaithForge Technologies & Consulting" on the next line. Never one unbroken paragraph.
 - 3-4 sentences, about 45-70 words — lighter than the intro but still substantial, not a one-liner.
-- Gently float the earlier note back up ("just wanted to bring this back to the top of your inbox") — never guilt-trip, never "did you see my last email?", never manufactured urgency.
-- Add ONE genuinely new, specific reason to connect or a small relevant insight — don't just repeat the intro.
+- {step_angle}
+- Never guilt-trip, never "did you see my last email?", never manufactured urgency.
+- Don't just repeat the intro's wording or angle — this must read as a genuinely different message.
 - Same warm low-pressure close and the Bernedette Atong, FaithForge Technologies & Consulting sign-off.
 
 ## LEADS
@@ -192,8 +216,11 @@ def _lead_context(account, index: int) -> Dict[str, Any]:
 def _system_prompt() -> str:
     # service_lines.md and voice_reference.md are outreach-only — never added
     # to DEFAULT_KB_FILES, so proposal generation (packet_builder.py's bare
-    # load_kb()) never sees them.
-    kb = load_kb("company_profile", "bernedette_bio", "target_market", "service_lines", "voice_reference")
+    # load_kb()) never sees them. case_studies.md IS also in DEFAULT_KB_FILES
+    # (proposals already use it) — including it here isn't an isolation
+    # violation, it just gives outreach real, verified results to cite
+    # instead of inventing stats for a follow-up "proof point".
+    kb = load_kb("company_profile", "bernedette_bio", "target_market", "service_lines", "voice_reference", "case_studies")
     return OUTREACH_SYSTEM.format(knowledge_base=kb)
 
 
@@ -265,12 +292,16 @@ def generate_sync(accounts: List, model: str = DEFAULT_MODEL) -> List[Dict[str, 
     return results
 
 
-def generate_follow_ups(items: List[Dict[str, Any]], model: str = DEFAULT_MODEL) -> List[Dict[str, Any]]:
-    """items: [{"account": Account, "original_body": str}]. Returns the same
-    shape as generate_sync: [{account_id, subject, body, model_used, error}]."""
+def generate_follow_ups(items: List[Dict[str, Any]], model: str = DEFAULT_MODEL, step: int = 1) -> List[Dict[str, Any]]:
+    """items: [{"account": Account, "original_body": str}]. `step` (1-3) picks
+    the angle for this touch (new value point / proof point / lower-the-ask)
+    so the sequence doesn't just re-send the same generic bump each time.
+    Returns the same shape as generate_sync: [{account_id, subject, body,
+    model_used, error}]."""
     client = _client()
     system = _system_prompt()
     results: List[Dict[str, Any]] = []
+    step_angle = FOLLOW_UP_ANGLE_BY_STEP.get(step, FOLLOW_UP_ANGLE_BY_STEP[1])
 
     for chunk in _chunk(items, CHUNK_SIZE):
         leads = []
@@ -278,7 +309,7 @@ def generate_follow_ups(items: List[Dict[str, Any]], model: str = DEFAULT_MODEL)
             ctx = _lead_context(item["account"], i)
             ctx["original_message"] = item.get("original_body") or ""
             leads.append(ctx)
-        prompt = FOLLOW_UP_PROMPT.format(leads_json=json.dumps(leads, indent=1))
+        prompt = FOLLOW_UP_PROMPT.format(leads_json=json.dumps(leads, indent=1), step_angle=step_angle)
         chunk_error = None
         by_index: Dict[int, dict] = {}
         try:

@@ -87,6 +87,10 @@ _ALIASES: Dict[str, str] = {
     "telephone": "contact_phone",
     "pain": "pain_points",
     "pain points": "pain_points",
+    "trigger rationale": "pain_points",   # e.g. "Trigger / Rationale" — the specific
+    "trigger": "pain_points",             # news/hiring/funding hook a rep researched;
+    "rationale": "pain_points",           # feeds the AI's personalization exactly like
+                                           # the reference sheet's "Targeted Gap Angle".
     "entry offer": "entry_offer",
     "website": "website",
     "url": "website",

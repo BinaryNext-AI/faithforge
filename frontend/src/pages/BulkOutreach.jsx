@@ -79,6 +79,7 @@ export default function BulkOutreach() {
 
   // Follow-up sequence panel
   const [dueTotals, setDueTotals] = useState(null)          // {"1": N, "2": N, "3": N, "4": N}
+  const [dueDetail, setDueDetail] = useState({})            // {"1": [{account_id, company_name, contact_name, days_waiting}, ...], ...}
   const [dueLoading, setDueLoading] = useState(false)
   const [followUpLoading, setFollowUpLoading] = useState(null) // which step is generating, or null
   const [followUpNotice, setFollowUpNotice] = useState(null)
@@ -103,6 +104,7 @@ export default function BulkOutreach() {
     try {
       const result = await outreachFollowUpsDue()
       setDueTotals(result.totals || {})
+      setDueDetail(result.due || {})
     } catch (err) {
       setError(err.message)
     } finally {
@@ -412,6 +414,67 @@ export default function BulkOutreach() {
         </div>
       )}
 
+      {/* Follow-up due alert — visible immediately on open, regardless of step */}
+      {dueTotals && Object.values(dueTotals).some(n => n > 0) && (
+        <div className="card p-5 space-y-4 border-2 border-amber-200 bg-amber-50/40">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">
+                <Reply className="w-4 h-4 text-amber-600" />Leads waiting on a follow-up
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                These haven't replied yet. Pick a step below to draft the next touch — you still review and approve every draft before anything sends.
+              </p>
+              {detectNotice && <p className="text-xs text-emerald-700 mt-1.5">{detectNotice}</p>}
+              {followUpNotice && <p className="text-xs text-amber-800 mt-1.5">{followUpNotice}</p>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5">
+                <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
+              </button>
+              <button onClick={handleCheckReplies} disabled={detectLoading} className="btn-secondary text-sm px-4 flex items-center gap-2">
+                {detectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                Check for replies
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {[1, 2, 3, 4].map(stepNum => {
+              const items = dueDetail[String(stepNum)] || []
+              if (items.length === 0) return null
+              const sorted = [...items].sort((a, b) => (b.days_waiting || 0) - (a.days_waiting || 0))
+              const shown = sorted.slice(0, 6)
+              const extra = sorted.length - shown.length
+              return (
+                <div key={stepNum} className="bg-white rounded-lg border border-amber-200 p-3">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <p className="text-xs font-semibold text-gray-700">{SEQUENCE_STEP_LABELS[stepNum]} due · {items.length}</p>
+                    <button
+                      onClick={() => handleGenerateFollowUpStep(stepNum)}
+                      disabled={followUpLoading !== null}
+                      className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {followUpLoading === stepNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Reply className="w-3.5 h-3.5" />}
+                      Start {SEQUENCE_STEP_LABELS[stepNum]}
+                    </button>
+                  </div>
+                  <ul className="space-y-1">
+                    {shown.map(item => (
+                      <li key={item.account_id} className="text-xs text-gray-600 flex items-center justify-between gap-3">
+                        <span className="truncate">{item.company_name}{item.contact_name ? ` — ${item.contact_name}` : ''}</span>
+                        <span className="shrink-0 text-gray-400">contacted {item.days_waiting} day{item.days_waiting === 1 ? '' : 's'} ago — please follow up</span>
+                      </li>
+                    ))}
+                    {extra > 0 && <li className="text-xs text-gray-400">+{extra} more</li>}
+                  </ul>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* STEP: Upload */}
       {step === 'upload' && (
         <div className="card p-6 space-y-5">
@@ -527,56 +590,6 @@ export default function BulkOutreach() {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Follow-up sequence — separate from uploading new leads */}
-      {step === 'upload' && (
-        <div className="card p-5 space-y-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                <Reply className="w-4 h-4 text-blue-600" />Follow-up sequence
-              </p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                A 4-touch cadence (3 follow-ups, then a no-pressure breakup) for leads who haven't replied.
-                You still review and approve every draft before anything is sent.
-              </p>
-              {detectNotice && <p className="text-xs text-emerald-600 mt-1.5">{detectNotice}</p>}
-              {followUpNotice && <p className="text-xs text-amber-600 mt-1.5">{followUpNotice}</p>}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5">
-                <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
-              </button>
-              <button onClick={handleCheckReplies} disabled={detectLoading} className="btn-secondary text-sm px-4 flex items-center gap-2">
-                {detectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                Check for replies
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[1, 2, 3, 4].map(stepNum => {
-              const count = dueTotals ? (dueTotals[String(stepNum)] || 0) : 0
-              return (
-                <div key={stepNum} className="bg-gray-50 rounded-lg p-3 flex flex-col gap-2">
-                  <div>
-                    <p className="text-2xl font-bold text-gray-900">{count}</p>
-                    <p className="text-xs text-gray-500">{SEQUENCE_STEP_LABELS[stepNum]} due</p>
-                  </div>
-                  <button
-                    onClick={() => handleGenerateFollowUpStep(stepNum)}
-                    disabled={followUpLoading !== null || count === 0}
-                    className="btn-primary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {followUpLoading === stepNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Reply className="w-3.5 h-3.5" />}
-                    Generate
-                  </button>
-                </div>
-              )
-            })}
-          </div>
         </div>
       )}
 

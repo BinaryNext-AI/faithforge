@@ -1047,17 +1047,33 @@ Status: {opp.status}"""
     # vanish from the counts — a compliance tool reporting "0 missing" because
     # it never looked is the exact failure this feature exists to prevent.
     # Anything unaccounted for is surfaced as "uncertain", never assumed fine.
+    def _match_key(value: str) -> str:
+        # Tolerant join key: the model is asked to echo document_name exactly,
+        # but near-misses ("W-9 Form" vs "W-9", a trailing "(if applicable)",
+        # casing/spacing drift) would otherwise mark a genuinely-assessed item
+        # "not assessed" AND duplicate it as an extra row.
+        key = re.sub(r"\(if applicable\)", "", (value or "").lower())
+        return re.sub(r"[^a-z0-9]+", "", key)
+
     by_name = {}
     for finding in findings:
         name = (finding.get("document_name") or "").strip()
         if name:
-            by_name[name] = finding
+            by_name[_match_key(name)] = finding
     reconciled = []
     for req in requirements:
         name = (req.get("document_name") or "").strip()
         if not name:
             continue
-        finding = by_name.pop(name, None)
+        req_key = _match_key(name)
+        finding = by_name.pop(req_key, None)
+        if finding is None and req_key:
+            # Fall back to containment ("W-9" vs "W-9 Form"), but only when it
+            # resolves to exactly one candidate — an ambiguous match is worse
+            # than reporting the item unassessed.
+            candidates = [k for k in by_name if k and (req_key in k or k in req_key)]
+            if len(candidates) == 1:
+                finding = by_name.pop(candidates[0])
         if finding is None or finding.get("status") not in ("satisfied", "missing", "uncertain"):
             finding = {
                 "document_name": name,

@@ -724,7 +724,7 @@ def review_documents_endpoint(
     if not opp.documents:
         raise HTTPException(status_code=400, detail="No documents uploaded to review")
     from document_processor import process_document, truncate_for_ai
-    from ai_screener import review_documents
+    from ai_screener import review_documents, extract_structured_checklist
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
@@ -734,7 +734,8 @@ Agency: {opp.agency_name}
 Solicitation: {opp.solicitation_number}
 Summary: {opp.opportunity_summary}
 Status: {opp.status}"""
-    result = review_documents(opp_context, "\n\n".join(doc_texts))
+    combined_doc_text = "\n\n".join(doc_texts)
+    result = review_documents(opp_context, combined_doc_text)
     # Update opportunity fields from review
     updatable = [
         "opportunity_title", "agency_name", "solicitation_number",
@@ -751,6 +752,45 @@ Status: {opp.status}"""
         val = result.get(field)
         if val:
             setattr(opp, field, val)
+
+    # Structured, multi-step, 13-category requirement extraction (additive —
+    # runs alongside review_documents() above, does not replace it). On any
+    # failure, log and continue with just the existing flat extraction, same
+    # defensive pattern review_documents() already uses for its own parsing.
+    try:
+        structured = extract_structured_checklist(opp_context, combined_doc_text)
+        requirements = structured.get("requirements") or []
+        if requirements:
+            opp.structured_checklist = json.dumps(structured)
+
+            # Derive/overwrite the flat submission_checklist so the existing
+            # checkbox-driven UI (parseChecklistItems) keeps working, now fed
+            # by richer, category-classified data instead of one freeform pass.
+            checklist_lines = []
+            for req in requirements:
+                if not req.get("required", True):
+                    continue
+                name = (req.get("document_name") or "").strip()
+                if not name:
+                    continue
+                suffix = " [ON FILE]" if req.get("on_file") else ""
+                checklist_lines.append(f"- {name}{suffix}")
+            if checklist_lines:
+                opp.submission_checklist = "\n".join(checklist_lines)
+
+            # Derive required_forms from Attachments/Forms-category items or
+            # any item with a template/attachment reference.
+            form_names = []
+            for req in requirements:
+                category = req.get("category")
+                template_ref = req.get("template_reference")
+                name = (req.get("document_name") or "").strip()
+                if name and (category == "Attachments and Forms" or template_ref):
+                    form_names.append(name)
+            if form_names:
+                opp.required_forms = ", ".join(form_names)
+    except Exception as e:
+        logger.warning(f"Structured checklist extraction failed for opportunity {opportunity_id}: {e}")
     for field in ("due_date", "pre_bid_date"):
         val = result.get(field)
         if val:

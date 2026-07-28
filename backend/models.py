@@ -79,6 +79,12 @@ class Opportunity(Base):
     pricing_requirements = Column(Text)
     required_attachments = Column(Text)
     disqualifying_requirements = Column(Text)
+    # Structured, multi-step, 13-category requirement extraction (Bernedette's
+    # 2026-07-28 feedback) — JSON-serialized {"requirements": [...],
+    # "sections_identified": [...], "extraction_summary": "..."}. Additive:
+    # submission_checklist/required_forms above stay populated (now derived
+    # from this richer data) so the existing checkbox-gating UI is unaffected.
+    structured_checklist = Column(Text)
 
     documents = relationship("Document", back_populates="opportunity", cascade="all, delete-orphan")
     packets = relationship("Packet", back_populates="opportunity", cascade="all, delete-orphan")

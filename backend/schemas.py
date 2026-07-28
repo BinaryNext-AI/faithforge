@@ -64,6 +64,7 @@ class OpportunityBase(BaseModel):
     pricing_requirements: Optional[str] = None
     required_attachments: Optional[str] = None
     disqualifying_requirements: Optional[str] = None
+    structured_checklist: Optional[str] = None
 
 
 class OpportunityOut(OpportunityBase):

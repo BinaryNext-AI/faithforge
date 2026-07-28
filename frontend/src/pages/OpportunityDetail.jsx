@@ -234,6 +234,149 @@ function GoNoGoPanel({ result }) {
   )
 }
 
+// ─── Detailed Compliance Requirements (read-only, additive) ─────────────────
+// Renders opp.structured_checklist (the new multi-step, 13-category
+// extraction). This is a reference/detail view only — no checkboxes, no
+// localStorage, no interaction with checklistBlocking. The existing Step 3
+// checkbox-driven "Gather Required Documents" flow above is untouched.
+
+const CHECKLIST_CATEGORY_STYLES = {
+  'Mandatory Requirement Keywords': 'bg-red-100 text-red-800',
+  'Proposal Section Keywords': 'bg-blue-100 text-blue-800',
+  'Administrative Documents': 'bg-purple-100 text-purple-800',
+  'Certifications and Compliance Forms': 'bg-teal-100 text-teal-800',
+  'Legal and Registration Documents': 'bg-indigo-100 text-indigo-800',
+  'Technical Proposal Documents': 'bg-sky-100 text-sky-800',
+  'Experience and Personnel Documents': 'bg-cyan-100 text-cyan-800',
+  'Pricing Documents': 'bg-amber-100 text-amber-800',
+  'Attachments and Forms': 'bg-orange-100 text-orange-800',
+  'Compliance Language': 'bg-slate-100 text-slate-800',
+  'Insurance Requirements': 'bg-emerald-100 text-emerald-800',
+  'Financial Documents': 'bg-lime-100 text-lime-800',
+  'Contract Documents': 'bg-pink-100 text-pink-800',
+}
+
+function CategoryBadge({ category }) {
+  const style = CHECKLIST_CATEGORY_STYLES[category] || 'bg-gray-100 text-gray-600'
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${style}`}>
+      {category || 'Uncategorized'}
+    </span>
+  )
+}
+
+function YesNoDot({ value, title }) {
+  if (!value) return null
+  return <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" title={title} />
+}
+
+function DetailedRequirementsSection({ structuredChecklistJson }) {
+  const [expanded, setExpanded] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('All')
+
+  let parsed = null
+  try { parsed = JSON.parse(structuredChecklistJson) } catch { parsed = null }
+  if (!parsed || !Array.isArray(parsed.requirements) || parsed.requirements.length === 0) return null
+
+  const requirements = parsed.requirements
+  const categories = ['All', ...Array.from(new Set(requirements.map(r => r.category).filter(Boolean)))]
+  const filtered = categoryFilter === 'All' ? requirements : requirements.filter(r => r.category === categoryFilter)
+
+  return (
+    <div className="card p-5 space-y-4">
+      <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between text-left">
+        <div>
+          <h3 className="font-semibold text-gray-900 text-sm">Detailed Compliance Requirements</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Structured, category-classified breakdown of every extracted requirement — reference only, not a second checklist gate.
+          </p>
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />}
+      </button>
+
+      {expanded && (
+        <div className="space-y-4">
+          {(parsed.sections_identified?.length > 0 || parsed.extraction_summary) && (
+            <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg text-xs text-gray-600 space-y-1">
+              {parsed.sections_identified?.length > 0 && (
+                <p><span className="font-semibold text-gray-700">Sections identified:</span> {parsed.sections_identified.join(', ')}</p>
+              )}
+              {parsed.extraction_summary && (
+                <p><span className="font-semibold text-gray-700">Summary:</span> {parsed.extraction_summary}</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-1.5">
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setCategoryFilter(cat)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  categoryFilter === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {cat}{cat !== 'All' ? ` (${requirements.filter(r => r.category === cat).length})` : ` (${requirements.length})`}
+              </button>
+            ))}
+          </div>
+
+          <div className="overflow-x-auto -mx-5 px-5">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500 uppercase tracking-wide text-[10px]">
+                  <th className="text-left py-2 pr-3 font-semibold">Document Name</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Category</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Mandatory</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Section</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Page</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Sig / Notary</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Template Ref</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Format</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Copies</th>
+                  <th className="text-left py-2 pr-3 font-semibold">On File</th>
+                  <th className="text-left py-2 font-semibold">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={i} className="border-b border-gray-100 align-top">
+                    <td className="py-2 pr-3 font-medium text-gray-900 whitespace-nowrap">{r.document_name || '—'}</td>
+                    <td className="py-2 pr-3"><CategoryBadge category={r.category} /></td>
+                    <td className="py-2 pr-3">
+                      {r.mandatory
+                        ? <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">Mandatory</span>
+                        : <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 text-[10px] font-medium">Optional</span>}
+                    </td>
+                    <td className="py-2 pr-3 text-gray-600">{r.proposal_section || '—'}</td>
+                    <td className="py-2 pr-3 text-gray-600">{r.page_number || '—'}</td>
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-1 text-gray-500">
+                        {r.signature_required && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-medium">Sig</span>}
+                        {r.notarization_required && <span className="px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-medium">Notary</span>}
+                        {!r.signature_required && !r.notarization_required && '—'}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-gray-600">{r.template_reference || '—'}</td>
+                    <td className="py-2 pr-3 text-gray-600">{r.required_file_format || '—'}</td>
+                    <td className="py-2 pr-3 text-gray-600">{r.number_of_copies || '—'}</td>
+                    <td className="py-2 pr-3">
+                      {r.on_file
+                        ? <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold">On File</span>
+                        : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-medium">Needed</span>}
+                    </td>
+                    <td className="py-2 text-gray-500 max-w-xs">{r.notes || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Field({ label, value, mono = false, link = false }) {
   if (!value) return null
   return (
@@ -610,6 +753,11 @@ export default function OpportunityDetail() {
           </button>
         </div>
       ) : null}
+
+      {/* ── Detailed Compliance Requirements (additive, read-only) ── */}
+      {opp.structured_checklist && (
+        <DetailedRequirementsSection structuredChecklistJson={opp.structured_checklist} />
+      )}
 
       {/* ── Opportunity Details (collapsible) ── */}
       <CollapsibleCard title="Opportunity Details & AI Analysis">

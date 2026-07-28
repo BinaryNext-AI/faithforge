@@ -4,6 +4,7 @@ from typing import Dict, Any
 from openai import OpenAI
 from config import settings
 from knowledge import load_standing_documents
+from checklist_keywords import render_keyword_library_for_prompt
 
 MODEL = "gpt-4o-mini"
 
@@ -449,5 +450,105 @@ def review_documents(
         result = {
             "review_summary": "Document review failed to parse AI response.",
             "opportunity_summary": raw[:1000] if raw else "No response",
+        }
+    return result
+
+
+# ─── Structured, multi-step compliance-checklist extraction ────────────────
+#
+# Implements Bernedette Atong's feedback (2026-07-28) about missed/incomplete
+# submission checklists on real bids (the MCPS contract had missing
+# attachments and an incorrect Volume II structure). Rather than a single-pass
+# flat-text extraction, this walks the model through the same multi-step
+# process she described: identify sections -> extract requirement statements
+# -> classify each into one of 13 categories -> produce one structured record
+# per requirement -> flag what's already on file. This runs ALONGSIDE
+# review_documents() (not instead of it) — both write to the Opportunity row.
+
+STRUCTURED_CHECKLIST_PROMPT = """You are extracting a structured compliance checklist from solicitation documents for FaithForge, using a disciplined multi-step process. Do NOT just produce the final JSON from a single read-through — work through these steps in order:
+
+STEP 1 — Identify the proposal's sections. Scan the documents for section headers such as Proposal Requirements, Submission Instructions, Proposal Format, Required Attachments, Evaluation Criteria, Volume I/II/III, Technical Proposal, Cost Proposal, etc. Use the "Proposal Section Keywords" category below to recognize these even when phrased differently.
+
+STEP 2 — Extract every requirement statement. Read the documents looking for obligation language (shall/must/required/mandatory/etc.) using the "Mandatory Requirement Keywords" and "Compliance Language" categories below to recognize it. Each sentence or clause that obligates the offeror to submit, sign, notarize, or include something is a candidate requirement.
+
+STEP 3 — Classify each requirement into EXACTLY ONE of the 13 categories below (use the exact category name as it appears as a key).
+
+STEP 4 — Produce ONE structured record per requirement (not a flat blob) with all the fields in the schema below.
+
+STEP 5 — Mark whether FaithForge already holds each item on file. FaithForge keeps the following documents on file and can attach them to any submission without gathering them anew:
+
+{standing_documents}
+
+Set "on_file": true for any requirement that matches one of these standing documents by MEANING, not exact wording (e.g. "signed W-9" matches "W-9"). Set "on_file": false for anything that must be newly created, signed, or specifically tailored for this solicitation.
+
+STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classify requirements):
+{keyword_library}
+
+EXISTING OPPORTUNITY DATA:
+{opportunity_context}
+
+DOCUMENTS CONTENT:
+{documents_text}
+
+Respond with ONLY valid JSON, using this exact schema:
+{{
+  "requirements": [
+    {{
+      "document_name": "<name of the required document/deliverable>",
+      "category": "<one of the 13 category names above, exact string match>",
+      "required": true|false,
+      "mandatory": true|false,
+      "proposal_section": "<which section of the RFP this was found in, or null>",
+      "page_number": "<page reference if stated, or null>",
+      "due_before_submission": true|false,
+      "signature_required": true|false,
+      "notarization_required": true|false,
+      "template_reference": "<e.g. 'Attachment C' / 'Form B' / 'Exhibit A', or null>",
+      "required_file_format": "<e.g. PDF, Word, or null>",
+      "number_of_copies": "<e.g. '1 original + 3 copies', or null>",
+      "on_file": true|false,
+      "notes": "<any additional instruction specific to this item, or null>"
+    }}
+  ],
+  "sections_identified": ["<list of proposal section names found in the solicitation>"],
+  "extraction_summary": "<2-3 sentence summary of coverage and any ambiguity>"
+}}"""
+
+
+def extract_structured_checklist(
+    opportunity_context: str,
+    documents_text: str,
+) -> Dict[str, Any]:
+    """Multi-step structured requirement extraction (see STRUCTURED_CHECKLIST_PROMPT).
+
+    Mirrors review_documents()'s sizing/budget/call/parse pattern exactly —
+    same doc_char_budget sizing, same call_openai, same extract_json, same
+    STANDING_DOCS_PREAMBLE-style "what's on file" comparison (here reused via
+    load_standing_documents() directly, now producing a boolean per-item
+    instead of a text suffix).
+    """
+    max_tokens = 4096
+    keyword_library = render_keyword_library_for_prompt()
+    standing_documents = load_standing_documents()
+    overhead = STRUCTURED_CHECKLIST_PROMPT.format(
+        standing_documents=standing_documents,
+        keyword_library=keyword_library,
+        opportunity_context=opportunity_context,
+        documents_text="",
+    )
+    max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
+    prompt = STRUCTURED_CHECKLIST_PROMPT.format(
+        standing_documents=standing_documents,
+        keyword_library=keyword_library,
+        opportunity_context=opportunity_context,
+        documents_text=documents_text[:max_doc_chars],
+    )
+    raw = call_openai(prompt, max_tokens=max_tokens)
+    result = extract_json(raw)
+    if not result or "requirements" not in result:
+        result = {
+            "requirements": [],
+            "sections_identified": [],
+            "extraction_summary": "Structured checklist extraction failed to parse AI response.",
         }
     return result

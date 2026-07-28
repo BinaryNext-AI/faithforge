@@ -64,6 +64,13 @@ export const getDocuments = (opportunityId) => api.get(`/opportunities/${opportu
 export const deleteDocument = (opportunityId, docId) => api.delete(`/opportunities/${opportunityId}/documents/${docId}`).then(r => r.data)
 export const reviewDocuments = (opportunityId) => api.post(`/opportunities/${opportunityId}/documents/review`).then(r => r.data)
 
+// Pre-Submission Gap Check (step 5 of Bernedette's workflow) — caller
+// explicitly designates which materials make up the RESPONSE package
+// (opp.documents are the solicitation/RFP files, not the response).
+export const checkSubmissionGaps = (opportunityId, { document_ids, include_packet, draft_text } = {}) =>
+  api.post(`/opportunities/${opportunityId}/submission-gap-check`,
+    { document_ids, include_packet, draft_text }, { timeout: 300000 }).then(r => r.data)
+
 // Packets — multi-pass generation via OpenAI can take several minutes
 export const buildPacket = (opportunityId, customInstructions = '') =>
   api.post(`/opportunities/${opportunityId}/packet`, { custom_instructions: customInstructions }, { timeout: 600000 }).then(r => r.data)

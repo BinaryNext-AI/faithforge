@@ -26,6 +26,7 @@ from schemas import (
     OpportunityOut, OpportunityUpdate, OpportunityCreate, StatusUpdate, DocumentOut,
     PacketOut, AuditLogOut, DashboardStats, ScanResult, AppSettingOut,
     PacketBuildRequest, CompleteDraftRequest, CompleteDraftOut, RevisePacketRequest,
+    SubmissionGapCheckRequest,
     AccountOut, AccountCreate, AccountUpdate, AccountStageUpdate, CRMStats,
     AccountDeleteAllRequest, AccountDeleteAllOut,
     ColdEmailRequest, ColdEmailFollowUpRequest,
@@ -943,6 +944,117 @@ def complete_draft_endpoint(
     db.refresh(packet)
     log_action(db, "draft_completed", opportunity_id, json.dumps({"document_id": draft_document_id}))
     return {"packet": packet, "analysis": result["analysis"]}
+
+
+# ─── Pre-Submission Gap Check (step 5 of Bernedette's workflow) ────────────
+# Steps 1-4 (identify sections -> extract requirements -> classify ->
+# build checklist) already run via documents/review above and are stored in
+# Opportunity.structured_checklist. This is the final step: compare those
+# extracted requirements against the assembled RESPONSE package to flag gaps
+# before submission. IMPORTANT: Opportunity.documents holds the
+# solicitation/RFP files the user uploaded to be analyzed — NOT the response
+# package — so the caller must explicitly say which materials constitute the
+# response (document_ids / include_packet / draft_text). Nothing is assumed.
+@app.post("/api/opportunities/{opportunity_id}/submission-gap-check", response_model=OpportunityOut)
+def submission_gap_check_endpoint(
+    opportunity_id: int,
+    body: SubmissionGapCheckRequest = SubmissionGapCheckRequest(),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    try:
+        structured = json.loads(opp.structured_checklist or "{}")
+    except json.JSONDecodeError:
+        structured = {}
+    requirements = structured.get("requirements") or []
+    if not requirements:
+        raise HTTPException(
+            status_code=400,
+            detail="Run AI Review first — there are no extracted requirements to check against.",
+        )
+
+    from document_processor import process_document, truncate_for_ai
+    from ai_screener import check_submission_gaps
+
+    # Assemble response materials strictly from what the caller designated —
+    # never assume every uploaded document is part of the response.
+    sources = []
+    for doc_id in (body.document_ids or []):
+        doc = next((d for d in opp.documents if d.id == doc_id), None)
+        if not doc:
+            continue
+        text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+        sources.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 150000)}")
+
+    if body.include_packet:
+        latest_packet = (
+            db.query(Packet)
+            .filter(Packet.opportunity_id == opportunity_id)
+            .order_by(desc(Packet.created_at))
+            .first()
+        )
+        if latest_packet:
+            packet_markdown = ""
+            try:
+                packet_content = json.loads(latest_packet.content_json or "{}")
+                packet_markdown = packet_content.get("markdown") or ""
+            except json.JSONDecodeError:
+                packet_markdown = ""
+            if not packet_markdown:
+                packet_markdown = latest_packet.html_content or ""
+            if packet_markdown:
+                sources.append(f"=== Generated Proposal Packet ===\n{truncate_for_ai(packet_markdown, 150000)}")
+
+    draft_text = (body.draft_text or "").strip()
+    if draft_text:
+        sources.append(f"=== Pasted Draft Text ===\n{truncate_for_ai(draft_text, 150000)}")
+
+    response_materials = "\n\n".join(sources).strip()
+    if not response_materials:
+        raise HTTPException(
+            status_code=400,
+            detail="No response materials to check — select at least one uploaded document, "
+                   "include a generated packet, or paste draft text.",
+        )
+
+    opp_context = f"""Title: {opp.opportunity_title or opp.email_subject}
+Agency: {opp.agency_name}
+Solicitation: {opp.solicitation_number}
+Summary: {opp.opportunity_summary}
+Status: {opp.status}"""
+
+    try:
+        result = check_submission_gaps(opp_context, requirements, response_materials)
+    except Exception as e:
+        msg = str(e)
+        logger.exception("Submission gap check failed for opportunity %d (%s): %s",
+                         opportunity_id, opp.opportunity_title or opp.email_subject, msg)
+        if "rate_limit" in msg or "429" in msg or "tokens per minute" in msg or "RateLimitError" in msg:
+            msg = ("OpenAI rate limit reached. Wait ~1 minute and retry, "
+                   "or check your API key has an active balance at platform.openai.com/usage.")
+        raise HTTPException(status_code=500, detail=f"Submission gap check failed: {msg}")
+
+    findings = result.get("findings") or []
+    counts = {"satisfied": 0, "missing": 0, "uncertain": 0}
+    for finding in findings:
+        status = finding.get("status")
+        if status in counts:
+            counts[status] += 1
+
+    opp.submission_gap_report = json.dumps({
+        **result,
+        "checked_at": datetime.utcnow().isoformat(),
+        "counts": counts,
+    })
+    opp.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(opp)
+    log_action(db, "submission_gap_check", opportunity_id, json.dumps({"counts": counts}))
+    return opp
 
 
 @app.get("/api/opportunities/{opportunity_id}/packet", response_model=PacketOut)

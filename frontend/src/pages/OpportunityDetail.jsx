@@ -10,7 +10,7 @@ import {
   getOpportunity, updateStatus, deleteOpportunity,
   uploadDocument, deleteDocument, reviewDocuments,
   buildPacket, getPacket, emailPacket, scoreGoNoGo, exportPacket, revisePacket,
-  completeDraftProposal,
+  completeDraftProposal, checkSubmissionGaps,
 } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import FileUpload from '../components/FileUpload'
@@ -377,6 +377,206 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Pre-Submission Gap Check (advisory, read-only; step 5 of Bernedette's ──
+// workflow — the final missing step: compare extracted requirements against
+// the assembled RESPONSE materials to flag gaps before submission).
+//
+// opp.documents are the solicitation/RFP files uploaded for analysis, NOT
+// the response package, so this section never assumes any of them are part
+// of the response — the user explicitly selects which ones are, plus
+// whether to include the generated packet and/or paste draft text.
+//
+// Purely advisory: does not gate or alter checklistBlocking, the Step 3
+// checkbox flow, its localStorage, or the "Email Bernedette" link above.
+
+const GAP_STATUS_STYLES = {
+  satisfied: 'bg-emerald-100 text-emerald-800',
+  missing: 'bg-red-100 text-red-800',
+  uncertain: 'bg-amber-100 text-amber-800',
+}
+const GAP_STATUS_ORDER = { missing: 0, uncertain: 1, satisfied: 2 }
+
+function GapStatusBadge({ status }) {
+  const style = GAP_STATUS_STYLES[status] || 'bg-gray-100 text-gray-600'
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Not checked'
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${style}`}>
+      {label}
+    </span>
+  )
+}
+
+function GapCheckSection({ opp, onUpdated, showToast }) {
+  const [expanded, setExpanded] = useState(true)
+  const [selectedDocIds, setSelectedDocIds] = useState([])
+  const [includePacket, setIncludePacket] = useState(true)
+  const [draftText, setDraftText] = useState('')
+  const [running, setRunning] = useState(false)
+  const [localError, setLocalError] = useState(null)
+
+  const hasPacketAvailable = (opp.packets?.length ?? 0) > 0
+
+  let report = null
+  try { report = opp.submission_gap_report ? JSON.parse(opp.submission_gap_report) : null } catch { report = null }
+
+  let requirements = []
+  try {
+    const parsed = JSON.parse(opp.structured_checklist)
+    if (Array.isArray(parsed?.requirements)) requirements = parsed.requirements
+  } catch { requirements = [] }
+
+  const toggleDoc = (docId) => {
+    setSelectedDocIds(prev => prev.includes(docId) ? prev.filter(x => x !== docId) : [...prev, docId])
+  }
+
+  const runCheck = async () => {
+    setLocalError(null)
+    setRunning(true)
+    try {
+      const updated = await checkSubmissionGaps(opp.id, {
+        document_ids: selectedDocIds,
+        include_packet: includePacket && hasPacketAvailable,
+        draft_text: draftText.trim() || undefined,
+      })
+      onUpdated(updated)
+      showToast?.('Gap check complete')
+    } catch (e) {
+      setLocalError(e.message)
+      showToast?.(e.message, 'error')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const findingsByName = {}
+  ;(report?.findings || []).forEach(f => { findingsByName[f.document_name] = f })
+
+  const rows = requirements
+    .map(r => ({ requirement: r, finding: findingsByName[r.document_name] || null }))
+    .sort((a, b) => {
+      const oa = a.finding ? (GAP_STATUS_ORDER[a.finding.status] ?? 3) : 3
+      const ob = b.finding ? (GAP_STATUS_ORDER[b.finding.status] ?? 3) : 3
+      return oa - ob
+    })
+
+  return (
+    <div className="card p-5 space-y-4 border-2 border-purple-100">
+      <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between text-left">
+        <div>
+          <h3 className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+            <ClipboardCheck className="w-4 h-4 text-purple-600" />
+            Pre-Submission Gap Check
+          </h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Compares the extracted requirements against the response materials you select — the last check before submitting.
+          </p>
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />}
+      </button>
+
+      {expanded && (
+        <div className="space-y-4">
+          <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <p>This is an AI assist to help a human verify submission-readiness — not a guarantee of compliance. Always confirm every "Missing" and "Uncertain" item yourself before submitting.</p>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-1">Which materials make up the response package?</p>
+            <p className="text-xs text-gray-400 mb-2">
+              Uploaded documents are normally the RFP/solicitation files — check any that are actually part of what you're submitting.
+            </p>
+            {opp.documents?.length > 0 ? (
+              <div className="space-y-1.5 mb-3">
+                {opp.documents.map(doc => (
+                  <label key={doc.id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={selectedDocIds.includes(doc.id)} onChange={() => toggleDoc(doc.id)} />
+                    {doc.original_filename}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 mb-3">No uploaded documents available to select.</p>
+            )}
+
+            <label className={`flex items-center gap-2 text-xs mb-3 ${hasPacketAvailable ? 'text-gray-700 cursor-pointer' : 'text-gray-300 cursor-not-allowed'}`}>
+              <input
+                type="checkbox"
+                checked={includePacket && hasPacketAvailable}
+                disabled={!hasPacketAvailable}
+                onChange={() => setIncludePacket(v => !v)}
+              />
+              Include the generated proposal packet{!hasPacketAvailable && ' (none generated yet)'}
+            </label>
+
+            <textarea
+              value={draftText}
+              onChange={e => setDraftText(e.target.value)}
+              placeholder="Optionally paste additional response/draft text to include in the check…"
+              rows={3}
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-800 placeholder-gray-400"
+            />
+          </div>
+
+          {localError && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 text-xs rounded-lg">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />{localError}
+            </div>
+          )}
+
+          <button onClick={runCheck} disabled={running} className="btn-primary text-xs">
+            {running ? <><Loader2 className="w-3 h-3 animate-spin" />Checking…</> : <><ClipboardCheck className="w-3 h-3" />Run Gap Check</>}
+          </button>
+
+          {report && (
+            <div className="space-y-3 pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                  {report.counts?.missing ?? 0} Missing
+                </span>
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                  {report.counts?.uncertain ?? 0} Uncertain
+                </span>
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                  {report.counts?.satisfied ?? 0} Satisfied
+                </span>
+                {report.checked_at && (
+                  <span className="text-xs text-gray-400 ml-auto">Checked {new Date(report.checked_at).toLocaleString()}</span>
+                )}
+              </div>
+
+              {report.summary && (
+                <p className="text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded-lg p-3">{report.summary}</p>
+              )}
+
+              <div className="space-y-2">
+                {rows.map((row, i) => (
+                  <div key={i} className="p-3 bg-gray-50 border border-gray-100 rounded-lg">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-gray-900">{row.requirement.document_name}</span>
+                      <GapStatusBadge status={row.finding?.status} />
+                    </div>
+                    {row.finding?.reason && <p className="text-xs text-gray-600 mt-1">{row.finding.reason}</p>}
+                    {row.finding?.evidence && (
+                      <p className="text-xs text-gray-500 mt-1 italic">
+                        "{row.finding.evidence}"
+                        {row.finding.found_in && <span className="not-italic text-gray-400"> — {row.finding.found_in}</span>}
+                      </p>
+                    )}
+                    {!row.finding && (
+                      <p className="text-xs text-gray-400 mt-1">Not checked yet — run the gap check to see a verdict for this item.</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -763,6 +963,11 @@ export default function OpportunityDetail() {
       {/* ── Detailed Compliance Requirements (additive, read-only) ── */}
       {opp.structured_checklist && (
         <DetailedRequirementsSection structuredChecklistJson={opp.structured_checklist} />
+      )}
+
+      {/* ── Pre-Submission Gap Check (advisory, read-only — step 5) ── */}
+      {opp.structured_checklist && (
+        <GapCheckSection opp={opp} onUpdated={setOpp} showToast={showToast} />
       )}
 
       {/* ── Opportunity Details (collapsible) ── */}

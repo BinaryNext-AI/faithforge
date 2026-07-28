@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 from openai import OpenAI
 from config import settings
 from knowledge import load_standing_documents
@@ -551,4 +551,109 @@ def extract_structured_checklist(
             "sections_identified": [],
             "extraction_summary": "Structured checklist extraction failed to parse AI response.",
         }
+    return result
+
+
+# ─── Pre-submission gap check (step 5 of Bernedette's workflow) ────────────
+#
+# Steps 1-4 of her requested workflow (identify sections -> extract
+# requirements -> classify -> build checklist) are extract_structured_checklist()
+# above. This is the final step: "compare the extracted requirements against
+# available proposal documents to identify any gaps before submission." It
+# runs against a caller-designated set of RESPONSE materials (NOT the
+# solicitation documents extract_structured_checklist reads) — see the
+# endpoint in main.py for how those are assembled.
+#
+# COMPLIANCE SAFETY: a false "satisfied" is far more dangerous than a false
+# "missing" here — it stops a human from looking for a document whose absence
+# gets a bid rejected. Three verdicts (never two), evidence required for any
+# "satisfied", "uncertain" as the default when unsure. Mirrors the same
+# discipline packet_builder.ANALYZE_DRAFT_PROMPT's checklist_items_addressed
+# note already uses ("never claim satisfied without real evidence"), applied
+# here per-requirement across the whole assembled package instead of a single
+# draft-vs-gaps narrative.
+
+SUBMISSION_GAP_PROMPT = """You are performing a pre-submission compliance gap check for FaithForge — the final check before a proposal goes out the door. Real FaithForge bids have previously been rejected for missing attachments, so precision matters far more than confidence here.
+
+EXISTING OPPORTUNITY DATA:
+{opportunity_context}
+
+EXTRACTED REQUIREMENTS (decide, for EACH one, whether the response materials below satisfy it):
+{requirements_json}
+
+ASSEMBLED RESPONSE MATERIALS BEING CHECKED (the actual response package — each source is delimited by a "=== source name ===" header so you can cite it in "found_in"):
+{response_materials}
+
+Use THREE verdicts only — never just two:
+- "satisfied" — the response materials clearly and concretely address this requirement. You MUST provide real quoted or closely paraphrased evidence from the response materials AND name the source document/section in "found_in". If you cannot point to actual evidence you found in the text, you may NOT use "satisfied".
+- "missing" — the response materials do not appear to address this requirement anywhere.
+- "uncertain" — you are not confident, the evidence is ambiguous or partial, OR this is a conditional item that a human must judge.
+
+CRITICAL SAFETY RULE — read this twice: when in doubt, ALWAYS choose "uncertain" over "satisfied". Never invent or assume evidence. A false "satisfied" is far more dangerous than a false "missing" or "uncertain": it tells a human to stop looking for a document whose absence could get the whole bid rejected. This is a suggestion for a human to verify before submission, NOT a final determination of compliance.
+
+Special handling (apply before general judgment):
+- If a requirement's "on_file" field is true, it is a FaithForge standing document (e.g. signed W-9, certificate of insurance) that FaithForge keeps on file and attaches separately — it will legitimately NOT appear anywhere in the response text. Mark these "satisfied" with reason "held on file by FaithForge" and evidence null. Do not flag these missing just because the text doesn't mention them.
+- If a requirement's "required" field is false (a conditional / "if applicable" item), ALWAYS mark it "uncertain" — never "satisfied" and never "missing" — with a reason noting a human must decide whether it applies to this submission.
+
+Respond with ONLY valid JSON (no prose, no markdown fences), using this exact schema:
+{{
+  "findings": [
+    {{
+      "document_name": "<must exactly match the requirement's document_name above so the UI can join them>",
+      "status": "satisfied" | "missing" | "uncertain",
+      "evidence": "<quoted or closely paraphrased text from the response materials, or null>",
+      "found_in": "<the source document/section name it was found in, or null>",
+      "reason": "<one short sentence explaining the verdict>"
+    }}
+  ],
+  "summary": "<2-3 sentences: overall submission readiness and the most important gaps>"
+}}
+
+Return exactly one finding per requirement listed above — never skip one, never merge two requirements into one finding."""
+
+
+def check_submission_gaps(
+    opportunity_context: str,
+    requirements: List[Dict[str, Any]],
+    response_materials: str,
+) -> Dict[str, Any]:
+    """Per-requirement satisfied/missing/uncertain verdicts comparing the
+    structured checklist's requirements against the assembled response package.
+
+    Mirrors review_documents()/extract_structured_checklist()'s sizing
+    (doc_char_budget), call (call_openai), and parse (extract_json) pattern,
+    plus the same defensive "never raise past the caller" fallback dict.
+    """
+    max_tokens = 4096
+    # Compact projection — just enough per requirement for the model to judge,
+    # not the full record (page_number, copies, format, etc. don't change the
+    # verdict and would waste prompt budget better spent on response_materials).
+    compact_requirements = [
+        {
+            "document_name": r.get("document_name"),
+            "category": r.get("category"),
+            "mandatory": r.get("mandatory"),
+            "required": r.get("required"),
+            "on_file": r.get("on_file"),
+            "template_reference": r.get("template_reference"),
+            "notes": r.get("notes"),
+        }
+        for r in requirements
+    ]
+    requirements_json = json.dumps(compact_requirements, indent=1)
+    overhead = SUBMISSION_GAP_PROMPT.format(
+        opportunity_context=opportunity_context,
+        requirements_json=requirements_json,
+        response_materials="",
+    )
+    max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
+    prompt = SUBMISSION_GAP_PROMPT.format(
+        opportunity_context=opportunity_context,
+        requirements_json=requirements_json,
+        response_materials=response_materials[:max_doc_chars],
+    )
+    raw = call_openai(prompt, max_tokens=max_tokens)
+    result = extract_json(raw)
+    if not result or "findings" not in result:
+        result = {"findings": [], "summary": "Gap check failed to parse AI response."}
     return result

@@ -83,6 +83,7 @@ def _migrate_add_columns():
         _ensure_column(conn, "outreach_emails", "sequence_step", "INTEGER DEFAULT 0")
         _ensure_column(conn, "outreach_emails", "sent_message_id", "TEXT")
         _ensure_column(conn, "opportunities", "structured_checklist", "TEXT")
+        _ensure_column(conn, "opportunities", "submission_gap_report", "TEXT")
         conn.commit()
 
     # Legacy SQLite-only additions (Postgres deploys were created after these existed).

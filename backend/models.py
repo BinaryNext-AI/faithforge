@@ -85,6 +85,14 @@ class Opportunity(Base):
     # submission_checklist/required_forms above stay populated (now derived
     # from this richer data) so the existing checkbox-gating UI is unaffected.
     structured_checklist = Column(Text)
+    # Pre-submission gap check — step 5 of Bernedette's workflow (the final
+    # missing step: "compare the extracted requirements against available
+    # proposal documents to identify any gaps before submission"). JSON-
+    # serialized {"findings": [...], "summary": "...", "checked_at": <ISO
+    # timestamp>, "counts": {"satisfied": n, "missing": n, "uncertain": n}}.
+    # Advisory only — read-only in the UI, never gates or alters
+    # structured_checklist/submission_checklist or checklistBlocking.
+    submission_gap_report = Column(Text)
 
     documents = relationship("Document", back_populates="opportunity", cascade="all, delete-orphan")
     packets = relationship("Packet", back_populates="opportunity", cascade="all, delete-orphan")

@@ -65,6 +65,7 @@ class OpportunityBase(BaseModel):
     required_attachments: Optional[str] = None
     disqualifying_requirements: Optional[str] = None
     structured_checklist: Optional[str] = None
+    submission_gap_report: Optional[str] = None
 
 
 class OpportunityOut(OpportunityBase):
@@ -123,6 +124,17 @@ class CompleteDraftOut(BaseModel):
 
 class RevisePacketRequest(BaseModel):
     instruction: str = Field(..., min_length=1)
+
+
+# ─── Pre-Submission Gap Check (step 5 of Bernedette's workflow) ─────────────
+# Caller explicitly designates which materials constitute the RESPONSE
+# package being checked — Opportunity.documents are the solicitation/RFP
+# files, not the response, so nothing here is assumed automatically.
+
+class SubmissionGapCheckRequest(BaseModel):
+    document_ids: Optional[List[int]] = None
+    include_packet: bool = True
+    draft_text: Optional[str] = None
 
 
 class AuditLogOut(BaseModel):

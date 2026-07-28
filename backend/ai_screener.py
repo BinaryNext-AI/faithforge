@@ -185,6 +185,38 @@ def doc_char_budget(system: str, prompt_overhead: str, max_tokens: int) -> int:
     return max(400, ceiling - used) * 4
 
 
+def fit_documents_to_budget(documents_text: str, max_chars: int) -> "tuple[str, bool]":
+    """Fit combined document text to max_chars for a single LLM call.
+
+    A real solicitation is routinely uploaded as multiple files (base RFP +
+    amendments + a specifications sheet), each already capped at 200k chars
+    on the way in. Three such files alone can exceed a single call's budget.
+    A naive documents_text[:max_chars] silently drops everything after the
+    cut — with opp.documents having no explicit order, that's whatever was
+    uploaded last, which for a real bid is often an amendment or the
+    attachments/requirements the reviewer added *because* they matter. And a
+    plain slice gives the model zero signal anything is missing, so it can
+    confidently report full coverage over a solicitation it only half saw.
+
+    Keeps the first and last halves (mirroring truncate_for_ai's head+tail
+    approach) and inserts a visible marker, so the model is told to hedge
+    rather than silently miss content, and returns whether truncation
+    happened so the caller can warn a human too.
+    """
+    if len(documents_text) <= max_chars:
+        return documents_text, False
+    half = max_chars // 2
+    dropped = len(documents_text) - max_chars
+    marker = (
+        f"\n\n[... {dropped:,} characters of the uploaded documents were cut here to fit this "
+        "review's size limit. Some requirements, sections, or attachments this solicitation "
+        "contains may NOT be reflected in what follows — do not treat this as complete coverage. "
+        "If in doubt about whether something was missed, say so rather than reporting the "
+        "document set as fully covered. ...]\n\n"
+    )
+    return documents_text[:half] + marker + documents_text[-half:], True
+
+
 def call_openai(prompt: str, system: str = SYSTEM_PROMPT, max_tokens: int = 4096) -> str:
     import traceback as _tb
     prompt = fit_prompt_to_budget(system, prompt, max_tokens)
@@ -440,9 +472,10 @@ def review_documents(
         opportunity_context=opportunity_context, documents_text=""
     )
     max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
+    fitted_text, was_truncated = fit_documents_to_budget(documents_text, max_doc_chars)
     prompt = preamble + DOCUMENT_REVIEW_PROMPT.format(
         opportunity_context=opportunity_context,
-        documents_text=documents_text[:max_doc_chars],
+        documents_text=fitted_text,
     )
     raw = call_openai(prompt, max_tokens=max_tokens)
     result = extract_json(raw)
@@ -451,6 +484,7 @@ def review_documents(
             "review_summary": "Document review failed to parse AI response.",
             "opportunity_summary": raw[:1000] if raw else "No response",
         }
+    result["input_truncated"] = was_truncated
     return result
 
 
@@ -537,11 +571,12 @@ def extract_structured_checklist(
         documents_text="",
     )
     max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
+    fitted_text, was_truncated = fit_documents_to_budget(documents_text, max_doc_chars)
     prompt = STRUCTURED_CHECKLIST_PROMPT.format(
         standing_documents=standing_documents,
         keyword_library=keyword_library,
         opportunity_context=opportunity_context,
-        documents_text=documents_text[:max_doc_chars],
+        documents_text=fitted_text,
     )
     raw = call_openai(prompt, max_tokens=max_tokens)
     result = extract_json(raw)
@@ -551,6 +586,7 @@ def extract_structured_checklist(
             "sections_identified": [],
             "extraction_summary": "Structured checklist extraction failed to parse AI response.",
         }
+    result["input_truncated"] = was_truncated
     return result
 
 
@@ -647,13 +683,15 @@ def check_submission_gaps(
         response_materials="",
     )
     max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
+    fitted_materials, was_truncated = fit_documents_to_budget(response_materials, max_doc_chars)
     prompt = SUBMISSION_GAP_PROMPT.format(
         opportunity_context=opportunity_context,
         requirements_json=requirements_json,
-        response_materials=response_materials[:max_doc_chars],
+        response_materials=fitted_materials,
     )
     raw = call_openai(prompt, max_tokens=max_tokens)
     result = extract_json(raw)
     if not result or "findings" not in result:
         result = {"findings": [], "summary": "Gap check failed to parse AI response."}
+    result["input_truncated"] = was_truncated
     return result

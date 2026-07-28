@@ -737,6 +737,11 @@ Summary: {opp.opportunity_summary}
 Status: {opp.status}"""
     combined_doc_text = "\n\n".join(doc_texts)
     result = review_documents(opp_context, combined_doc_text)
+    if result.get("input_truncated"):
+        warning = ("⚠ The uploaded documents were too large to fully analyze in one pass — "
+                   "this review may not cover the entire solicitation. Consider running AI "
+                   "Review again after splitting large files, or verify manually. ")
+        result["opportunity_summary"] = warning + (result.get("opportunity_summary") or "")
     # Update opportunity fields from review
     updatable = [
         "opportunity_title", "agency_name", "solicitation_number",
@@ -761,6 +766,11 @@ Status: {opp.status}"""
     try:
         structured = extract_structured_checklist(opp_context, combined_doc_text)
         requirements = structured.get("requirements") or []
+        if structured.get("input_truncated"):
+            warning = ("⚠ Some uploaded document content was cut to fit this analysis — the "
+                       "extracted requirements below may be INCOMPLETE. Consider re-running "
+                       "after splitting large files, or verify against the source documents. ")
+            structured["extraction_summary"] = warning + (structured.get("extraction_summary") or "")
         if requirements:
             opp.structured_checklist = json.dumps(structured)
 
@@ -1037,6 +1047,12 @@ Status: {opp.status}"""
             msg = ("OpenAI rate limit reached. Wait ~1 minute and retry, "
                    "or check your API key has an active balance at platform.openai.com/usage.")
         raise HTTPException(status_code=500, detail=f"Submission gap check failed: {msg}")
+
+    if result.get("input_truncated"):
+        warning = ("⚠ The response materials were too large to fully check in one pass — "
+                   "some content may not have been compared. Consider checking large "
+                   "documents individually. ")
+        result["summary"] = warning + (result.get("summary") or "")
 
     findings = result.get("findings") or []
 

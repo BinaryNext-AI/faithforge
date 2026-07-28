@@ -23,6 +23,10 @@ from checklist_keywords import CHECKLIST_KEYWORD_CATEGORIES
 _HIGH_PATTERN_SOURCES: List[str] = [
     r"\*\s*response required",
     r"required with all proposals",
+    # Headings/rows of an explicit submittal table, e.g. MDOT's
+    # "TABLE A - Attachments and Documents Required with the Proposal".
+    r"(attachments?|documents?)[^\n]{0,40}required with the (proposal|bid)",
+    r"documents? and information required",
     r"\b(shall|must)\s+(submit|provide|include|contain|furnish|attach|complete|upload)\b",
     r"failure to (submit|provide)",
     r"non-?responsive",
@@ -32,10 +36,12 @@ _HIGH_PATTERN_SOURCES: List[str] = [
     r"completed and signed",
     r"duly executed",
     r"authorized signatures?",
-    r"\bappendix\s+[a-z]\b",
-    r"\battachment\s+[a-z]\b",
-    r"\bexhibit\s+[a-z]\b",
-    r"\btab\s+\d",
+    r"\bappendix\s+[a-z0-9]\b",
+    r"\battachment\s+[a-z0-9]\b",
+    r"\bexhibit\s+[a-z0-9]\b",
+    # "Tab A"/"Tab 1" both occur — requiring a digit missed MDOT's entire
+    # Tab A-Q proposal structure, which IS that solicitation's checklist.
+    r"\btab\s+[a-z0-9]\b",
     r"[☐☑✓]",  # ☐ ☑ ✓
 ]
 _HIGH_PATTERNS: List[Tuple[str, "re.Pattern"]] = [

@@ -12,7 +12,12 @@ MODEL = "gpt-4o-mini"
 # Requirement extraction is the safety-critical path (missed/invented items on
 # a real government bid) — it alone gets the stronger, more expensive model.
 # Screening, outreach, and packet building keep MODEL; do not change them.
-EXTRACTION_MODEL = os.getenv("FAITHFORGE_EXTRACTION_MODEL", "gpt-4o")
+# Same model packet_builder.py uses to write entire proposals — a harder job
+# than structured extraction, which here also has anchor hints, mandatory
+# verbatim source_quotes, and code-side quote verification backing it up.
+# Briefly ran on gpt-4o (~17x the price) and pushed a 39-file package over
+# $1.50; env-overridable if a specific bid ever justifies paying for it.
+EXTRACTION_MODEL = os.getenv("FAITHFORGE_EXTRACTION_MODEL", "gpt-4o-mini")
 
 STANDING_DOCS_PREAMBLE = """FaithForge already keeps the following documents on file and can attach them to any submission without gathering them anew:
 
@@ -302,6 +307,20 @@ def fit_documents_to_budget(documents_text: str, max_chars: int) -> "tuple[str, 
 
 RETRY_ATTEMPTS = 4
 RETRY_BACKOFF_SECONDS = 2
+
+# Chunk size for anchor-narrowed text. The 3/31 recall collapse came from
+# 161k chars of MIXED content in one call, most of it irrelevant; narrowed
+# text is dense with actual obligations, so a larger window stays reliable
+# while cutting call count several-fold. Env-overridable so the recall/cost
+# tradeoff can be retuned without a deploy.
+NARROWED_CHUNK_CHARS = int(os.getenv("FAITHFORGE_CHUNK_CHARS", "35000"))
+
+# Documents at or below this size skip chunking and get batched together into
+# one call. The extraction prompt is ~14k chars of fixed overhead, so a 1k-char
+# amendment analysed alone pays 14x its own size in instructions — a real
+# 39-file package had 32 files smaller than the prompt itself.
+SMALL_DOC_CHARS = int(os.getenv("FAITHFORGE_SMALL_DOC_CHARS", "12000"))
+SMALL_DOC_BATCH_CHARS = int(os.getenv("FAITHFORGE_SMALL_BATCH_CHARS", "30000"))
 
 # Error classes worth retrying: a blip, a rate limit, or a server-side 5xx.
 # Matched on the exception's type name and message so this keeps working
@@ -653,12 +672,54 @@ Be conservative: if you are not sure whether this document tells an offeror what
 Respond with ONLY the single label word (e.g. "solicitation"), nothing else — no punctuation, no explanation."""
 
 
+# Filenames that state their own role. A model call to decide that
+# "TSOOPD2609 Pre-Proposal Sign-In Sheet.docx" is a sign-in sheet is money
+# lit on fire — a real 39-file package spent 39 calls on this. Only genuinely
+# ambiguous names fall through to the model.
+#
+# Deliberately conservative in one direction: nothing here can classify a
+# document as background_reference on a weak signal, because that SKIPS it
+# entirely. Q&A and addenda are authoritative (they change requirements) and
+# are matched as "amendment", never skipped.
+_FILENAME_ROLE_RULES: List[Tuple[str, str]] = [
+    (r"sign[\s\-_]*in[\s\-_]*sheet|attendance\s+(sheet|list)", "background_reference"),
+    (r"pre[\s\-_]*proposal.*(slide|agenda|script|presentation)", "background_reference"),
+    (r"lessons[\s\-_]*learned|retrospective", "background_reference"),
+    # Amendments/addenda/Q&A CHANGE requirements — always authoritative,
+    # matched before the form-template rule so an "Addendum #3 - Appendix 5"
+    # is never mistaken for a blank form and skipped.
+    (r"\bq\s*&\s*a\b|questions?\s+and\s+answers?", "amendment"),
+    (r"\bamendment\b|\baddendum\b|\baddenda\b", "amendment"),
+    # A standalone "Attachment K", "Appendix 4", "Exhibit 1" file is a blank
+    # form the offeror FILLS IN — it is a checklist ITEM, not a source of
+    # requirements. The parent RFP enumerates them (e.g. MDOT's "TABLE A -
+    # Attachments and Documents Required with the Proposal"), so mining each
+    # one re-derives what the RFP already said and was a main source of the
+    # 145-item noise pile on a 39-file package.
+    (r"\b(attachment|appendix|exhibit)\s*[#]?\s*[a-z0-9]{1,3}\b[\s\.\-–_]", "form_template"),
+]
+_FILENAME_ROLE_PATTERNS = [(re.compile(p, re.IGNORECASE), role) for p, role in _FILENAME_ROLE_RULES]
+
+
+def _role_from_filename(filename: str) -> Optional[str]:
+    """Role when the filename alone is conclusive, else None (ask the model)."""
+    name = filename or ""
+    for regex, role in _FILENAME_ROLE_PATTERNS:
+        if regex.search(name):
+            return role
+    return None
+
+
 def classify_document_role(filename: str, text: str) -> str:
-    """One cheap call on MODEL, using only text[:6000] + text[-2000:]. Returns
-    exactly one of: solicitation | amendment | background_reference |
+    """Filename rules first (free), model only for genuinely ambiguous names.
+
+    Returns exactly one of: solicitation | amendment | background_reference |
     pricing_form | unknown. On ANY exception/parse failure, returns "unknown",
     which the caller treats as authoritative (i.e. NOT skipped — proceeds to
     extraction like "solicitation" would)."""
+    from_name = _role_from_filename(filename)
+    if from_name:
+        return from_name
     try:
         text = text or ""
         head = text[:6000]
@@ -833,6 +894,22 @@ def extract_structured_checklist(
     return result
 
 
+def _merge_batch(batch: List[Tuple[str, str, str]]) -> Tuple[str, str, str]:
+    """Fold several small documents into one work unit for a single call.
+
+    Each keeps a `=== filename ===` header so the model (and the reader of a
+    source_quote) can still tell which document a requirement came from. Role
+    is "amendment" if any member is one — amendments change requirements, and
+    the stricter reading is the safe one.
+    """
+    if len(batch) == 1:
+        return batch[0]
+    names = [item[0] for item in batch]
+    combined = "\n\n".join(f"=== {name} ===\n{body}" for name, body, _ in batch)
+    role = "amendment" if any(item[2] == "amendment" for item in batch) else "solicitation"
+    return (f"{len(batch)} small documents ({', '.join(names)})", combined, role)
+
+
 def _requirement_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
@@ -991,22 +1068,54 @@ def extract_structured_checklist_for_documents(
     all_coverage_gaps: List[Dict[str, Any]] = []
     failed_chunks_total = 0
 
+    # Classify first, then group. Documents smaller than the extraction
+    # prompt's own overhead (~14k chars) are batched together so a 900-char
+    # amendment doesn't cost a full call of instructions to read. Batching
+    # concatenates text — unlike anchor-narrowing (tried and rejected above),
+    # it removes nothing, so recall is unaffected.
+    pending: List[Tuple[str, str, str]] = []  # (filename, body_text, role)
     for doc_text in doc_texts:
         filename, body_text = _split_doc_header(doc_text)
         filename = filename or "(unnamed document)"
-
         role = classify_document_role(filename, body_text)
-        if role in ("background_reference", "pricing_form"):
-            # This is the fix for the audit's 6 wrong-source (lessons-learned)
-            # items: the document's role, not the model's per-requirement
-            # judgment, decides whether it's mined at all.
+        if role in ("background_reference", "pricing_form", "form_template"):
             documents_analyzed.append({
-                "name": filename, "role": role, "chunks": 0, "requirements_found": 0,
+                "name": filename, "role": role, "chunks": 0,
+                "requirements_found": 0, "chunks_failed": 0,
             })
             continue
+        pending.append((filename, body_text, role))
 
+    small = [d for d in pending if len(d[1]) <= SMALL_DOC_CHARS]
+    large = [d for d in pending if len(d[1]) > SMALL_DOC_CHARS]
+
+    work_units: List[Tuple[str, str, str]] = list(large)
+    batch: List[Tuple[str, str, str]] = []
+    batch_len = 0
+    for item in small:
+        if batch and batch_len + len(item[1]) > SMALL_DOC_BATCH_CHARS:
+            work_units.append(_merge_batch(batch))
+            batch, batch_len = [], 0
+        batch.append(item)
+        batch_len += len(item[1])
+    if batch:
+        work_units.append(_merge_batch(batch))
+
+    for filename, body_text, role in work_units:
         anchors = scan_requirement_anchors(body_text)
-        chunks = _chunk_document(body_text)
+
+        # Send the full document. Two attempts to send less were measured and
+        # BOTH cost recall, because the binding constraint is not input size:
+        # the model emits a bounded number of requirements per call (~8-20), so
+        # recall tracks the NUMBER OF CALLS, not how much text each one sees.
+        #   - padding every anchor into ~200 fragments: 28/31 -> 16-21/31
+        #   - sending only the dense requirement sections: 28/31 -> 17/31
+        #     (15 requirements returned vs 47 — fewer, denser chunks meant
+        #      fewer calls, and each call still capped out)
+        # Cost is therefore controlled by the model and by not mining documents
+        # that state no requirements — not by trimming the text. Do not
+        # re-introduce input trimming without re-running ami_ground_truth.md.
+        chunks = _chunk_document(body_text, chunk_chars=NARROWED_CHUNK_CHARS)
         doc_requirements: List[Dict[str, Any]] = []
         doc_failed_chunks = 0
 

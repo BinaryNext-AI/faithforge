@@ -1039,6 +1039,40 @@ Status: {opp.status}"""
         raise HTTPException(status_code=500, detail=f"Submission gap check failed: {msg}")
 
     findings = result.get("findings") or []
+
+    # Reconcile findings against the requirements they were meant to cover.
+    # The model is told to return one finding per requirement, but nothing
+    # guarantees it does (long lists, truncation, a parse failure that yields
+    # zero findings). Without this, an unassessed requirement would silently
+    # vanish from the counts — a compliance tool reporting "0 missing" because
+    # it never looked is the exact failure this feature exists to prevent.
+    # Anything unaccounted for is surfaced as "uncertain", never assumed fine.
+    by_name = {}
+    for finding in findings:
+        name = (finding.get("document_name") or "").strip()
+        if name:
+            by_name[name] = finding
+    reconciled = []
+    for req in requirements:
+        name = (req.get("document_name") or "").strip()
+        if not name:
+            continue
+        finding = by_name.pop(name, None)
+        if finding is None or finding.get("status") not in ("satisfied", "missing", "uncertain"):
+            finding = {
+                "document_name": name,
+                "status": "uncertain",
+                "evidence": None,
+                "found_in": None,
+                "reason": "Not assessed by the automated check — verify this item manually.",
+            }
+        reconciled.append(finding)
+    # Keep any extra findings the model volunteered that match no requirement,
+    # rather than dropping them silently.
+    reconciled.extend(by_name.values())
+    findings = reconciled
+    result["findings"] = findings
+
     counts = {"satisfied": 0, "missing": 0, "uncertain": 0}
     for finding in findings:
         status = finding.get("status")

@@ -1,12 +1,18 @@
 import json
+import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from openai import OpenAI
 from config import settings
 from knowledge import load_standing_documents
 from checklist_keywords import render_keyword_library_for_prompt
+from requirement_anchors import scan_requirement_anchors, render_anchors_for_prompt
 
 MODEL = "gpt-4o-mini"
+# Requirement extraction is the safety-critical path (missed/invented items on
+# a real government bid) — it alone gets the stronger, more expensive model.
+# Screening, outreach, and packet building keep MODEL; do not change them.
+EXTRACTION_MODEL = os.getenv("FAITHFORGE_EXTRACTION_MODEL", "gpt-4o")
 
 STANDING_DOCS_PREAMBLE = """FaithForge already keeps the following documents on file and can attach them to any submission without gathering them anew:
 
@@ -294,21 +300,31 @@ def fit_documents_to_budget(documents_text: str, max_chars: int) -> "tuple[str, 
     return documents_text[:half] + "\n\n" + marker + "\n\n" + documents_text[-half:], True
 
 
-def call_openai(prompt: str, system: str = SYSTEM_PROMPT, max_tokens: int = 4096) -> str:
+def call_openai(
+    prompt: str,
+    system: str = SYSTEM_PROMPT,
+    max_tokens: int = 4096,
+    model: str = None,
+    temperature: float = None,
+) -> str:
     import traceback as _tb
     prompt = fit_prompt_to_budget(system, prompt, max_tokens)
     try:
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
     except Exception as e:
         raise RuntimeError(f"OpenAI client init failed: {e}\n{_tb.format_exc()}") from e
+    kwargs = {}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     try:
         response = client.chat.completions.create(
-            model=MODEL,
+            model=model or MODEL,
             max_tokens=max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
+            **kwargs,
         )
     except Exception as e:
         raise RuntimeError(f"OpenAI API call failed: {e}\n{_tb.format_exc()}") from e
@@ -565,6 +581,93 @@ def review_documents(
     return result
 
 
+# ─── Document-role classification ───────────────────────────────────────────
+#
+# The audit's #1 wrong-source failure was mining an internal lessons-learned
+# retrospective (a spreadsheet with a column literally named "RFP Required
+# Change") for "requirements" that were never actually asked of an offeror.
+# This one cheap call decides, per uploaded document, whether it is something
+# an offeror must respond to at all — BEFORE requirement extraction ever runs
+# on it.
+
+CLASSIFY_DOCUMENT_ROLE_PROMPT = """Classify the ROLE of this document within a government solicitation package.
+
+FILENAME: {filename}
+
+DOCUMENT EXCERPT — START OF DOCUMENT:
+{head}
+
+DOCUMENT EXCERPT — END OF DOCUMENT:
+{tail}
+
+Return exactly ONE of these role labels:
+- solicitation — the RFP/RFQ/IFB itself, an amendment/addendum, an appendix, a form, or an attachment that is part of what the offeror must read and respond to.
+- amendment — a formal amendment/addendum document that modifies an existing solicitation.
+- background_reference — internal studies, lessons-learned or pilot-program retrospectives, background one-pagers, meeting notes, or similar material that describes context but does NOT tell an offeror what to submit. Strong signal: a spreadsheet/table with a column like "RFP Required Change" or "Recommendation" describing what a FUTURE solicitation should contain — that is background commentary about a future document, never a submission requirement of THIS one.
+- pricing_form — a standalone pricing/cost worksheet or fee-schedule template with no other submittal instructions of its own.
+- unknown — you genuinely cannot tell from this excerpt.
+
+Be conservative: if you are not sure whether this document tells an offeror what to submit, answer "solicitation" — missing a real requirement is worse than over-extracting.
+
+Respond with ONLY the single label word (e.g. "solicitation"), nothing else — no punctuation, no explanation."""
+
+
+def classify_document_role(filename: str, text: str) -> str:
+    """One cheap call on MODEL, using only text[:6000] + text[-2000:]. Returns
+    exactly one of: solicitation | amendment | background_reference |
+    pricing_form | unknown. On ANY exception/parse failure, returns "unknown",
+    which the caller treats as authoritative (i.e. NOT skipped — proceeds to
+    extraction like "solicitation" would)."""
+    try:
+        text = text or ""
+        head = text[:6000]
+        tail = text[-2000:] if len(text) > 6000 else ""
+        prompt = CLASSIFY_DOCUMENT_ROLE_PROMPT.format(
+            filename=filename or "(unnamed document)", head=head, tail=tail,
+        )
+        raw = call_openai(prompt, max_tokens=20, temperature=0)
+        label = (raw or "").strip().strip(".").strip('"').strip("'").lower()
+        for candidate in ("background_reference", "pricing_form", "solicitation", "amendment", "unknown"):
+            if candidate in label:
+                return candidate
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _chunk_document(text: str, chunk_chars: int = 35000, overlap: int = 3000) -> List[Tuple[int, str]]:
+    """Split `text` into overlapping (start_offset, chunk_text) windows.
+
+    Small windows let the model enumerate requirements reliably; one 161K-char
+    blob does not (this is the direct fix for the audit's ~3/31 recall
+    collapse). Overlap guarantees a requirement whose statement straddles a
+    chunk boundary is still seen whole by at least one chunk. Prefers to break
+    on a double newline within the last 2000 chars of a chunk so a
+    requirement's sentence isn't sliced mid-line.
+    """
+    if not text:
+        return [(0, "")]
+    n = len(text)
+    if n <= chunk_chars:
+        return [(0, text)]
+
+    chunks: List[Tuple[int, str]] = []
+    pos = 0
+    while pos < n:
+        end = min(pos + chunk_chars, n)
+        if end < n:
+            search_start = max(pos, end - 2000)
+            break_idx = text.rfind("\n\n", search_start, end)
+            if break_idx != -1 and break_idx > pos:
+                end = break_idx + 2
+        chunks.append((pos, text[pos:end]))
+        if end >= n:
+            break
+        next_pos = end - overlap
+        pos = next_pos if next_pos > pos else end
+    return chunks
+
+
 # ─── Structured, multi-step compliance-checklist extraction ────────────────
 #
 # Implements Bernedette Atong's feedback (2026-07-28) about missed/incomplete
@@ -576,21 +679,32 @@ def review_documents(
 # per requirement -> flag what's already on file. This runs ALONGSIDE
 # review_documents() (not instead of it) — both write to the Opportunity row.
 
-STRUCTURED_CHECKLIST_PROMPT = """You are extracting a structured compliance checklist from solicitation documents for FaithForge, using a disciplined multi-step process. Do NOT just produce the final JSON from a single read-through — work through these steps in order:
+STRUCTURED_CHECKLIST_PROMPT = """You are extracting a structured compliance checklist from ONE EXCERPT of a solicitation document for FaithForge, using a disciplined multi-step process. Do NOT just produce the final JSON from a single read-through — work through these steps in order:
 
-STEP 1 — Identify the proposal's sections. Scan the documents for section headers such as Proposal Requirements, Submission Instructions, Proposal Format, Required Attachments, Evaluation Criteria, Volume I/II/III, Technical Proposal, Cost Proposal, etc. Use the "Proposal Section Keywords" category below to recognize these even when phrased differently.
+STEP 1 — Identify the proposal's sections visible in THIS excerpt. Scan for section headers such as Proposal Requirements, Submission Instructions, Proposal Format, Required Attachments, Evaluation Criteria, Volume I/II/III, Technical Proposal, Cost Proposal, etc. Use the "Proposal Section Keywords" category below to recognize these even when phrased differently.
 
-STEP 2 — Extract every requirement statement. Read the documents looking for obligation language (shall/must/required/mandatory/etc.) using the "Mandatory Requirement Keywords" and "Compliance Language" categories below to recognize it. Each sentence or clause that obligates the offeror to submit, sign, notarize, or include something is a candidate requirement.
+STEP 2 — Extract every requirement statement in THIS excerpt. Read looking for obligation language (shall/must/required/mandatory/etc.) using the "Mandatory Requirement Keywords" and "Compliance Language" categories below to recognize it. Each sentence or clause that obligates the offeror to submit, sign, notarize, or include something is a candidate requirement.
 
 STEP 3 — Classify each requirement into EXACTLY ONE of the 13 categories below (use the exact category name as it appears as a key).
 
-STEP 4 — Produce ONE structured record per requirement (not a flat blob) with all the fields in the schema below.
+STEP 4 — Produce ONE structured record per requirement (not a flat blob) with all the fields in the schema below, INCLUDING a verbatim `source_quote` for each one (see ANTI-FABRICATION below).
 
 STEP 5 — Mark whether FaithForge already holds each item on file. FaithForge keeps the following documents on file and can attach them to any submission without gathering them anew:
 
 {standing_documents}
 
-Set "on_file": true for any requirement that matches one of these standing documents by MEANING, not exact wording (e.g. "signed W-9" matches "W-9"). Set "on_file": false for anything that must be newly created, signed, or specifically tailored for this solicitation.
+Set "on_file": true ONLY when THIS EXCERPT itself indicates the item is already held/on file (matches one of the standing documents above by MEANING, not exact wording — e.g. "signed W-9" matches "W-9"). Never set "on_file": true by inferring from general knowledge of what firms typically keep on file — only from what this excerpt actually states. Set "on_file": false for anything that must be newly created, signed, or specifically tailored for this solicitation.
+
+ANTI-FABRICATION — read this twice, it is the most important rule here:
+Extract ONLY what THIS EXCERPT literally states. Do NOT add documents merely because they are common in government solicitations. Specifically: never output W-9, SAM registration, DUNS/UEI, or "capability statement" unless those exact terms appear in this excerpt. An invented requirement is a serious error — worse than missing one. Every requirement you emit MUST include a `source_quote`: the verbatim sentence or line from this excerpt that states it. Copy it exactly, character for character — do not paraphrase, summarize, or reconstruct it from memory. If you cannot quote the exact text that states a requirement, DO NOT emit that requirement at all.
+
+ANCHOR ACCOUNTING:
+A deterministic keyword scan (not an AI) flagged the lines below in THIS excerpt as likely submittal-requirement language. Account for EACH one: either extract it as a requirement (with its own source_quote), or omit it only because on inspection it is genuinely not something the offeror submits (boilerplate, a definition, an instruction to the agency itself, etc.) — do not omit one just because it's inconvenient to classify.
+
+VENDOR QUESTIONNAIRE / MINIMUM QUALIFICATIONS ITEMS COUNT TOO: a line marked "*Response required" (or similar — "must answer", "must respond") is a checklist requirement EVEN WHEN the required response is a narrative answer, an attestation, a yes/no confirmation, or a list of facts (e.g. years of experience, project history, a non-affiliation attestation) rather than a file upload. Do not silently treat these as "just a question to answer inline" and skip them — emit each one as its own requirement record (document_name can describe the response being required, e.g. "Turnkey AMI Project Experience Documentation", "Non-Affiliation Attestation", "Statement of Years of Firm Experience").
+{anchors_text}
+
+FORMAT / STRUCTURAL REQUIREMENTS ARE IN SCOPE. Page limits, tab/volume structure, page numbering, PDF bookmarking, number of copies, and "submit X separately from Y" are themselves requirements — a wrong volume structure has caused a real rejected FaithForge bid. Emit these with `"category": "Proposal Section Keywords"` and a `document_name` that names the constraint, e.g. "Technical Proposal — 60 page limit", "Proposal tabbed into TAB 1-7", "Price Proposal submitted separately from Technical Proposal".
 
 STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classify requirements):
 {keyword_library}
@@ -598,7 +712,7 @@ STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classif
 EXISTING OPPORTUNITY DATA:
 {opportunity_context}
 
-DOCUMENTS CONTENT:
+DOCUMENT EXCERPT (this is a PORTION of a larger document — do not assume anything not shown here, and do not worry that a requirement might already be covered by another portion; duplicates across excerpts are merged automatically):
 {documents_text}
 
 Respond with ONLY valid JSON, using this exact schema:
@@ -618,25 +732,28 @@ Respond with ONLY valid JSON, using this exact schema:
       "required_file_format": "<e.g. PDF, Word, or null>",
       "number_of_copies": "<e.g. '1 original + 3 copies', or null>",
       "on_file": true|false,
+      "source_quote": "<REQUIRED — the verbatim sentence/line from this excerpt stating the requirement. Do not emit the requirement if you cannot quote it exactly.>",
       "notes": "<any additional instruction specific to this item, or null>"
     }}
   ],
-  "sections_identified": ["<list of proposal section names found in the solicitation>"],
-  "extraction_summary": "<2-3 sentence summary of coverage and any ambiguity>"
+  "sections_identified": ["<list of proposal section names found in this excerpt>"],
+  "extraction_summary": "<2-3 sentence summary of coverage and any ambiguity in this excerpt>"
 }}"""
 
 
 def extract_structured_checklist(
     opportunity_context: str,
     documents_text: str,
+    anchors_text: str = "",
 ) -> Dict[str, Any]:
-    """Multi-step structured requirement extraction (see STRUCTURED_CHECKLIST_PROMPT).
+    """Multi-step structured requirement extraction over ONE chunk of ONE
+    document (see STRUCTURED_CHECKLIST_PROMPT and _chunk_document). Runs on
+    EXTRACTION_MODEL, not MODEL — this is the safety-critical path.
 
-    Mirrors review_documents()'s sizing/budget/call/parse pattern exactly —
-    same doc_char_budget sizing, same call_openai, same extract_json, same
-    STANDING_DOCS_PREAMBLE-style "what's on file" comparison (here reused via
-    load_standing_documents() directly, now producing a boolean per-item
-    instead of a text suffix).
+    Mirrors review_documents()'s sizing/budget/call/parse pattern — same
+    doc_char_budget sizing, same extract_json, same STANDING_DOCS_PREAMBLE-style
+    "what's on file" comparison (here reused via load_standing_documents()
+    directly, now producing a boolean per-item instead of a text suffix).
     """
     max_tokens = 4096
     keyword_library = render_keyword_library_for_prompt()
@@ -646,6 +763,7 @@ def extract_structured_checklist(
         keyword_library=keyword_library,
         opportunity_context=opportunity_context,
         documents_text="",
+        anchors_text=anchors_text,
     )
     max_doc_chars = doc_char_budget(SYSTEM_PROMPT, overhead, max_tokens)
     fitted_text, was_truncated = fit_documents_to_budget(documents_text, max_doc_chars)
@@ -654,8 +772,15 @@ def extract_structured_checklist(
         keyword_library=keyword_library,
         opportunity_context=opportunity_context,
         documents_text=fitted_text,
+        anchors_text=anchors_text,
     )
-    raw = call_openai(prompt, max_tokens=max_tokens)
+    # temperature=0: this is the safety-critical extraction path, and an
+    # audit trial run showed default sampling temperature non-deterministically
+    # dropping several real requirements (e.g. Minimum-Qualification narrative
+    # items) from run to run on the same chunk. Pinning temperature removes
+    # that source of recall variance — it does not affect screening,
+    # outreach, or packet-building calls, which keep their own defaults.
+    raw = call_openai(prompt, max_tokens=max_tokens, model=EXTRACTION_MODEL, temperature=0)
     result = extract_json(raw)
     if not result or "requirements" not in result:
         result = {
@@ -671,31 +796,148 @@ def _requirement_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
+_DOC_HEADER_RE = re.compile(r"^=== (.*?) ===\n", re.DOTALL)
+
+
+def _split_doc_header(doc_text: str) -> Tuple[str, str]:
+    """main.py builds each doc_texts entry as f"=== {filename} ===\\n{text}".
+    Peel that header off so anchor-scanning/quote-verification operate on the
+    document's actual text (offsets/quotes must refer to real document
+    content, not our own header line)."""
+    m = _DOC_HEADER_RE.match(doc_text or "")
+    if m:
+        return m.group(1).strip(), (doc_text or "")[m.end():]
+    return "", doc_text or ""
+
+
+def _normalize_for_match(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip().casefold()
+
+
+def verify_source_quotes(requirements: List[Dict[str, Any]], source_text: str) -> List[Dict[str, Any]]:
+    """Deterministic, code-side check that every requirement's source_quote
+    really appears in the document it was supposedly extracted from. This is
+    the safety-critical line in the whole rebuild: a false "complete" (a
+    fabricated requirement nobody questions because it's marked on_file) is
+    far more dangerous than a false "unsure" (a requirement flagged
+    UNVERIFIED that a human then checks by hand).
+    """
+    norm_source = _normalize_for_match(source_text)
+    out: List[Dict[str, Any]] = []
+    for req in requirements:
+        r = dict(req)
+        quote = (r.get("source_quote") or "").strip()
+        verified = False
+        if quote:
+            norm_quote = _normalize_for_match(quote)
+            if norm_quote and norm_quote in norm_source:
+                verified = True
+            elif norm_quote and len(norm_quote) > 0 and norm_quote[:40] in norm_source:
+                verified = True
+        r["quote_verified"] = verified
+        if not verified:
+            # Safety-critical: force on_file False so a fabricated/unverifiable
+            # item can never auto-satisfy the downstream gap check.
+            r["on_file"] = False
+            addition = "UNVERIFIED — could not locate this text in the source document; confirm manually."
+            existing_notes = (r.get("notes") or "").strip()
+            r["notes"] = f"{existing_notes} {addition}".strip() if existing_notes else addition
+        out.append(r)
+    return out
+
+
+def _locate_quote_offset(quote: str, text: str) -> Optional[int]:
+    """Best-effort offset of `quote` inside `text`, tolerant of whitespace
+    differences (the model may normalize line breaks). Used only for the
+    coverage-gap distance check — not part of quote verification itself."""
+    quote = (quote or "").strip()
+    if not quote:
+        return None
+    idx = text.find(quote)
+    if idx != -1:
+        return idx
+    tokens = quote.split()
+    if not tokens:
+        return None
+    pattern = r"\s+".join(re.escape(t) for t in tokens[:40])
+    try:
+        m = re.search(pattern, text, re.IGNORECASE)
+    except re.error:
+        return None
+    return m.start() if m else None
+
+
+def compute_coverage_gaps(
+    anchors: List[Dict[str, Any]],
+    requirements: List[Dict[str, Any]],
+    text: str,
+) -> List[Dict[str, Any]]:
+    """For each HIGH-strength anchor, is there a VERIFIED requirement whose
+    source_quote occurs within ±2500 chars of that anchor's offset? If not,
+    it's a coverage gap — a place the document uses mandatory submittal
+    language that produced no checklist item. This is what turns a silent
+    miss into a visible pointer a human can go check.
+    """
+    verified_offsets: List[int] = []
+    for r in requirements:
+        if not r.get("quote_verified"):
+            continue
+        offset = _locate_quote_offset(r.get("source_quote", ""), text)
+        if offset is not None:
+            verified_offsets.append(offset)
+
+    gaps: List[Dict[str, Any]] = []
+    for a in anchors:
+        if a.get("strength") != "high":
+            continue
+        if any(abs(a["offset"] - off) <= 2500 for off in verified_offsets):
+            continue
+        gaps.append({
+            "line_no": a["line_no"], "line": a["line"],
+            "offset": a["offset"], "patterns": a["patterns"],
+        })
+
+    gaps.sort(key=lambda g: g["offset"])
+    merged: List[Dict[str, Any]] = []
+    for g in gaps:
+        if merged and abs(g["offset"] - merged[-1]["offset"]) <= 400:
+            continue
+        merged.append(g)
+    return merged[:40]
+
+
 def extract_structured_checklist_for_documents(
     opportunity_context: str,
     doc_texts: List[str],
 ) -> Dict[str, Any]:
-    """The real fix for large multi-document solicitations: rather than
-    joining every uploaded document into one blob and truncating it to fit
-    one call's budget (which forces a compromise on ANY multi-document bid —
-    see fit_documents_to_budget's docstring for why smarter truncation only
-    repositions the blind spot, it doesn't remove it), this calls
-    extract_structured_checklist() ONCE PER DOCUMENT and merges the results.
+    """The real fix for the audit's recall collapse + fabrication + wrong-
+    source failures on a real 161K-char RFP. Per document:
 
-    Each document is already capped at 200k chars on upload (~50k tokens),
-    comfortably inside a single call's ~478k-char budget — so for any
-    realistic single document, this function needs NO truncation at all.
-    fit_documents_to_budget() still runs inside each per-document call as a
-    last-resort safety net for the rare single document that is itself
-    enormous, but it should almost never fire.
+    1. classify_document_role() — background_reference / pricing_form
+       documents (e.g. an internal lessons-learned retrospective) are skipped
+       entirely for requirement extraction, only recorded in
+       documents_analyzed. This alone kills wrong-source extraction.
+    2. scan_requirement_anchors() — deterministic keyword scan of the whole
+       document, independent of the model.
+    3. _chunk_document() + extract_structured_checklist() PER CHUNK, each
+       call given that chunk's own anchors to account for. Small windows
+       enumerate reliably; one enormous blob does not.
+    4. Merge requirements across chunks/documents (existing dedupe logic,
+       OR-ing boolean flags, filling empty text fields) — preferring a
+       VERIFIED source_quote over an unverified one when merging duplicates.
+    5. verify_source_quotes() against that document's full text.
+    6. compute_coverage_gaps() against that document's anchors + verified
+       requirements.
 
-    Costs one OpenAI call per document instead of one call total — a
-    deliberate trade of a few extra cents and seconds per review for actually
-    guaranteeing every uploaded document gets fully seen, which is the whole
-    point of this feature.
+    One chunk failing must not lose the others — same per-document resilience
+    pattern this function already had, extended to chunks.
     """
+    empty_result = {
+        "requirements": [], "sections_identified": [], "extraction_summary": "No documents to analyze.",
+        "input_truncated": False, "coverage_gaps": [], "documents_analyzed": [], "unverified_count": 0,
+    }
     if not doc_texts:
-        return {"requirements": [], "sections_identified": [], "extraction_summary": "No documents to analyze.", "input_truncated": False}
+        return empty_result
 
     all_requirements: List[Dict[str, Any]] = []
     seen_keys: Dict[str, int] = {}  # requirement key -> index in all_requirements
@@ -703,35 +945,62 @@ def extract_structured_checklist_for_documents(
     seen_sections = set()
     summaries = []
     any_truncated = False
-    any_succeeded = False
+    documents_analyzed: List[Dict[str, Any]] = []
+    all_coverage_gaps: List[Dict[str, Any]] = []
 
     for doc_text in doc_texts:
-        try:
-            result = extract_structured_checklist(opportunity_context, doc_text)
-        except Exception as e:
-            summaries.append(f"[A document failed to analyze: {e}]")
+        filename, body_text = _split_doc_header(doc_text)
+        filename = filename or "(unnamed document)"
+
+        role = classify_document_role(filename, body_text)
+        if role in ("background_reference", "pricing_form"):
+            # This is the fix for the audit's 6 wrong-source (lessons-learned)
+            # items: the document's role, not the model's per-requirement
+            # judgment, decides whether it's mined at all.
+            documents_analyzed.append({
+                "name": filename, "role": role, "chunks": 0, "requirements_found": 0,
+            })
             continue
-        any_succeeded = True
-        if result.get("input_truncated"):
-            any_truncated = True
-        for section in (result.get("sections_identified") or []):
-            key = section.strip().lower()
-            if key and key not in seen_sections:
-                seen_sections.add(key)
-                all_sections.append(section)
-        summary = (result.get("extraction_summary") or "").strip()
-        if summary:
-            summaries.append(summary)
-        for req in (result.get("requirements") or []):
-            name = (req.get("document_name") or "").strip()
-            if not name:
+
+        anchors = scan_requirement_anchors(body_text)
+        chunks = _chunk_document(body_text)
+        doc_requirements: List[Dict[str, Any]] = []
+
+        for start, chunk_text in chunks:
+            try:
+                anchors_text = render_anchors_for_prompt(anchors, start, start + len(chunk_text))
+                result = extract_structured_checklist(opportunity_context, chunk_text, anchors_text)
+            except Exception as e:
+                summaries.append(f"[A chunk of {filename} failed to analyze: {e}]")
                 continue
+            if result.get("input_truncated"):
+                any_truncated = True
+            for section in (result.get("sections_identified") or []):
+                key = section.strip().lower()
+                if key and key not in seen_sections:
+                    seen_sections.add(key)
+                    all_sections.append(section)
+            summary = (result.get("extraction_summary") or "").strip()
+            if summary:
+                summaries.append(summary)
+            for req in (result.get("requirements") or []):
+                name = (req.get("document_name") or "").strip()
+                if not name:
+                    continue
+                doc_requirements.append(req)
+
+        # Code-side verification against this document's FULL text (not just
+        # the chunk it was extracted from) — a requirement near a chunk
+        # boundary should still verify against the whole document.
+        verified_requirements = verify_source_quotes(doc_requirements, body_text)
+
+        for req in verified_requirements:
+            name = (req.get("document_name") or "").strip()
             key = _requirement_key(name)
             if key in seen_keys:
-                # Same requirement named in more than one document (e.g. an
-                # amendment restates a W-9 requirement already in the base
-                # RFP) — merge rather than duplicate. Never let a duplicate
-                # silently downgrade a flag another source already set.
+                # Same requirement named more than once (e.g. restated across
+                # chunks/documents) — merge rather than duplicate. Never let a
+                # duplicate silently downgrade a flag another source already set.
                 existing = all_requirements[seen_keys[key]]
                 for flag in ("required", "mandatory", "due_before_submission",
                              "signature_required", "notarization_required", "on_file"):
@@ -741,19 +1010,27 @@ def extract_structured_checklist_for_documents(
                                    "required_file_format", "number_of_copies", "notes"):
                     if not existing.get(text_field) and req.get(text_field):
                         existing[text_field] = req.get(text_field)
+                # Keep a verified source_quote over an unverified one.
+                if req.get("quote_verified") and not existing.get("quote_verified"):
+                    existing["source_quote"] = req.get("source_quote")
+                    existing["quote_verified"] = True
             else:
                 seen_keys[key] = len(all_requirements)
                 all_requirements.append(dict(req))
 
-    if not any_succeeded:
-        return {
-            "requirements": [], "sections_identified": [],
-            "extraction_summary": "Structured checklist extraction failed for every uploaded document.",
-            "input_truncated": False,
-        }
+        documents_analyzed.append({
+            "name": filename, "role": role, "chunks": len(chunks),
+            "requirements_found": len(verified_requirements),
+        })
+
+        all_coverage_gaps.extend(compute_coverage_gaps(anchors, verified_requirements, body_text))
+
+    all_coverage_gaps = all_coverage_gaps[:40]
+    unverified_count = sum(1 for r in all_requirements if r.get("quote_verified") is False)
 
     extraction_summary = (
-        f"Analyzed {len(doc_texts)} document(s) individually to ensure each was fully reviewed. "
+        f"Analyzed {len(doc_texts)} document(s) individually (chunked, with per-document role "
+        "classification and code-side source-quote verification) to ensure each was fully reviewed. "
         + " ".join(summaries)
     ).strip()
 
@@ -762,6 +1039,9 @@ def extract_structured_checklist_for_documents(
         "sections_identified": all_sections,
         "extraction_summary": extraction_summary,
         "input_truncated": any_truncated,
+        "coverage_gaps": all_coverage_gaps,
+        "documents_analyzed": documents_analyzed,
+        "unverified_count": unverified_count,
     }
 
 

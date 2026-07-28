@@ -772,14 +772,33 @@ Status: {opp.status}"""
         # documents to compete for one shared budget.
         structured = extract_structured_checklist_for_documents(opp_context, doc_texts)
         requirements = structured.get("requirements") or []
+        coverage_gaps = structured.get("coverage_gaps") or []
+        unverified_count = structured.get("unverified_count") or 0
         if structured.get("input_truncated"):
             warning = ("⚠ Some uploaded document content was cut to fit this analysis — the "
                        "extracted requirements below may be INCOMPLETE. Consider re-running "
                        "after splitting large files, or verify against the source documents. ")
             structured["extraction_summary"] = warning + (structured.get("extraction_summary") or "")
-        if requirements:
+        if coverage_gaps:
+            # This is the check that turns a silent miss into a visible
+            # pointer: the solicitation used mandatory submittal language
+            # (a HIGH-strength anchor) but no verified requirement covers it.
+            gap_warning = (
+                f"⚠ {len(coverage_gaps)} place(s) in the solicitation use mandatory submittal "
+                "language but produced no checklist item — review these manually before "
+                "submitting. "
+            )
+            structured["extraction_summary"] = gap_warning + (structured.get("extraction_summary") or "")
+        if unverified_count:
+            structured["extraction_summary"] = (
+                (structured.get("extraction_summary") or "")
+                + f" {unverified_count} requirement(s) could not be verified against the source "
+                "text and are marked [UNVERIFIED] — confirm these manually before relying on them."
+            )
+        if requirements or coverage_gaps or structured.get("documents_analyzed"):
             opp.structured_checklist = json.dumps(structured)
 
+        if requirements:
             # Derive/overwrite the flat submission_checklist so the existing
             # checkbox-driven UI (parseChecklistItems) keeps working, now fed
             # by richer, category-classified data instead of one freeform pass.
@@ -794,10 +813,12 @@ Status: {opp.status}"""
                 # prevent. Surface it flagged so a human decides it doesn't
                 # apply, rather than silently deciding for them.
                 conditional = "" if req.get("required", True) else " (if applicable)"
+                # Order: name, (if applicable), [UNVERIFIED], [ON FILE].
                 # [ON FILE] must stay the LAST suffix — parseChecklistItems
                 # matches it anchored to end-of-line.
+                unverified = " [UNVERIFIED]" if req.get("quote_verified") is False else ""
                 on_file = " [ON FILE]" if req.get("on_file") else ""
-                checklist_lines.append(f"- {name}{conditional}{on_file}")
+                checklist_lines.append(f"- {name}{conditional}{unverified}{on_file}")
             if checklist_lines:
                 opp.submission_checklist = "\n".join(checklist_lines)
 

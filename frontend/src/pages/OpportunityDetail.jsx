@@ -270,15 +270,93 @@ function YesNoDot({ value, title }) {
   return <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" title={title} />
 }
 
+function UnverifiedBadge() {
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold whitespace-nowrap"
+      title="A deterministic code check could not find this exact text anywhere in the source document. Confirm this requirement manually before relying on it."
+    >
+      Unverified
+    </span>
+  )
+}
+
+function CoverageGapsWarning({ gaps }) {
+  const [showAll, setShowAll] = useState(false)
+  if (!gaps || gaps.length === 0) return null
+  const visible = showAll ? gaps : gaps.slice(0, 8)
+
+  return (
+    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 space-y-2">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-semibold">Possible missed requirements — verify manually</p>
+          <p className="text-amber-700 mt-0.5">
+            {gaps.length} place{gaps.length !== 1 ? 's' : ''} in the solicitation use mandatory submittal
+            language (e.g. "shall submit", "*Response required") but produced no checklist item below.
+          </p>
+        </div>
+      </div>
+      <ul className="space-y-1 pl-5">
+        {visible.map((g, i) => (
+          <li key={i} className="text-amber-700">
+            <span className="font-mono text-amber-500">line {g.line_no}:</span> "{g.line}"
+          </li>
+        ))}
+      </ul>
+      {gaps.length > 8 && (
+        <button onClick={() => setShowAll(s => !s)} className="text-amber-700 font-semibold hover:text-amber-900">
+          {showAll ? 'Show fewer' : `Show all ${gaps.length}`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function DocumentsAnalyzedSummary({ documents }) {
+  if (!documents || documents.length === 0) return null
+  const roleStyles = {
+    solicitation: 'bg-blue-50 text-blue-700',
+    amendment: 'bg-indigo-50 text-indigo-700',
+    background_reference: 'bg-gray-100 text-gray-500',
+    pricing_form: 'bg-lime-50 text-lime-700',
+    unknown: 'bg-amber-50 text-amber-700',
+  }
+  return (
+    <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg text-xs text-gray-600 space-y-1.5">
+      <p className="font-semibold text-gray-700">Documents analyzed</p>
+      <ul className="space-y-1">
+        {documents.map((d, i) => (
+          <li key={i} className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-gray-800">{d.name}</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${roleStyles[d.role] || 'bg-gray-100 text-gray-500'}`}>
+              {(d.role || 'unknown').replace('_', ' ')}
+            </span>
+            {d.role === 'background_reference' || d.role === 'pricing_form' ? (
+              <span className="text-gray-400">— not mined for requirements</span>
+            ) : (
+              <span className="text-gray-400">— {d.chunks} chunk{d.chunks !== 1 ? 's' : ''}, {d.requirements_found} requirement{d.requirements_found !== 1 ? 's' : ''} found</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function DetailedRequirementsSection({ structuredChecklistJson }) {
   const [expanded, setExpanded] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState('All')
 
   let parsed = null
   try { parsed = JSON.parse(structuredChecklistJson) } catch { parsed = null }
-  if (!parsed || !Array.isArray(parsed.requirements) || parsed.requirements.length === 0) return null
+  if (!parsed) return null
+  const requirements = Array.isArray(parsed.requirements) ? parsed.requirements : []
+  const coverageGaps = Array.isArray(parsed.coverage_gaps) ? parsed.coverage_gaps : []
+  const documentsAnalyzed = Array.isArray(parsed.documents_analyzed) ? parsed.documents_analyzed : []
+  if (requirements.length === 0 && coverageGaps.length === 0 && documentsAnalyzed.length === 0) return null
 
-  const requirements = parsed.requirements
   const categories = ['All', ...Array.from(new Set(requirements.map(r => r.category).filter(Boolean)))]
   const filtered = categoryFilter === 'All' ? requirements : requirements.filter(r => r.category === categoryFilter)
 
@@ -286,7 +364,14 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
     <div className="card p-5 space-y-4">
       <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between text-left">
         <div>
-          <h3 className="font-semibold text-gray-900 text-sm">Detailed Compliance Requirements</h3>
+          <h3 className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+            Detailed Compliance Requirements
+            {parsed.unverified_count > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">
+                {parsed.unverified_count} unverified
+              </span>
+            )}
+          </h3>
           <p className="text-xs text-gray-500 mt-0.5">
             Structured, category-classified breakdown of every extracted requirement — reference only, not a second checklist gate.
           </p>
@@ -307,76 +392,91 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-1.5">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategoryFilter(cat)}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                  categoryFilter === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {cat}{cat !== 'All' ? ` (${requirements.filter(r => r.category === cat).length})` : ` (${requirements.length})`}
-              </button>
-            ))}
-          </div>
+          <CoverageGapsWarning gaps={coverageGaps} />
+          <DocumentsAnalyzedSummary documents={documentsAnalyzed} />
 
-          <div className="overflow-x-auto -mx-5 px-5">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-gray-200 text-gray-500 uppercase tracking-wide text-[10px]">
-                  <th className="text-left py-2 pr-3 font-semibold">Document Name</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Category</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Mandatory</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Due Before</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Section</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Page</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Sig / Notary</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Template Ref</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Format</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Copies</th>
-                  <th className="text-left py-2 pr-3 font-semibold">On File</th>
-                  <th className="text-left py-2 font-semibold">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r, i) => (
-                  <tr key={i} className="border-b border-gray-100 align-top">
-                    <td className="py-2 pr-3 font-medium text-gray-900 whitespace-nowrap">{r.document_name || '—'}</td>
-                    <td className="py-2 pr-3"><CategoryBadge category={r.category} /></td>
-                    <td className="py-2 pr-3">
-                      {r.mandatory
-                        ? <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">Mandatory</span>
-                        : <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 text-[10px] font-medium">Optional</span>}
-                    </td>
-                    <td className="py-2 pr-3">
-                      {r.due_before_submission
-                        ? <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 text-[10px] font-semibold whitespace-nowrap">Before deadline</span>
-                        : <span className="text-gray-400">—</span>}
-                    </td>
-                    <td className="py-2 pr-3 text-gray-600">{r.proposal_section || '—'}</td>
-                    <td className="py-2 pr-3 text-gray-600">{r.page_number || '—'}</td>
-                    <td className="py-2 pr-3">
-                      <div className="flex items-center gap-1 text-gray-500">
-                        {r.signature_required && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-medium">Sig</span>}
-                        {r.notarization_required && <span className="px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-medium">Notary</span>}
-                        {!r.signature_required && !r.notarization_required && '—'}
-                      </div>
-                    </td>
-                    <td className="py-2 pr-3 text-gray-600">{r.template_reference || '—'}</td>
-                    <td className="py-2 pr-3 text-gray-600">{r.required_file_format || '—'}</td>
-                    <td className="py-2 pr-3 text-gray-600">{r.number_of_copies || '—'}</td>
-                    <td className="py-2 pr-3">
-                      {r.on_file
-                        ? <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold">On File</span>
-                        : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-medium">Needed</span>}
-                    </td>
-                    <td className="py-2 text-gray-500 max-w-xs">{r.notes || '—'}</td>
-                  </tr>
+          {requirements.length > 0 && (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                {categories.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoryFilter(cat)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                      categoryFilter === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {cat}{cat !== 'All' ? ` (${requirements.filter(r => r.category === cat).length})` : ` (${requirements.length})`}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+
+              <div className="overflow-x-auto -mx-5 px-5">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-gray-500 uppercase tracking-wide text-[10px]">
+                      <th className="text-left py-2 pr-3 font-semibold">Document Name</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Category</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Mandatory</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Due Before</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Section</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Page</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Sig / Notary</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Template Ref</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Format</th>
+                      <th className="text-left py-2 pr-3 font-semibold">Copies</th>
+                      <th className="text-left py-2 pr-3 font-semibold">On File</th>
+                      <th className="text-left py-2 font-semibold">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((r, i) => (
+                      <tr key={i} className="border-b border-gray-100 align-top">
+                        <td className="py-2 pr-3 font-medium text-gray-900">
+                          <div className="flex items-center gap-1.5 whitespace-nowrap">
+                            {r.document_name || '—'}
+                            {r.quote_verified === false && <UnverifiedBadge />}
+                          </div>
+                          {r.source_quote && (
+                            <p className="mt-1 text-[11px] text-gray-400 italic font-normal whitespace-normal max-w-xs">"{r.source_quote}"</p>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3"><CategoryBadge category={r.category} /></td>
+                        <td className="py-2 pr-3">
+                          {r.mandatory
+                            ? <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">Mandatory</span>
+                            : <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 text-[10px] font-medium">Optional</span>}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.due_before_submission
+                            ? <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 text-[10px] font-semibold whitespace-nowrap">Before deadline</span>
+                            : <span className="text-gray-400">—</span>}
+                        </td>
+                        <td className="py-2 pr-3 text-gray-600">{r.proposal_section || '—'}</td>
+                        <td className="py-2 pr-3 text-gray-600">{r.page_number || '—'}</td>
+                        <td className="py-2 pr-3">
+                          <div className="flex items-center gap-1 text-gray-500">
+                            {r.signature_required && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-medium">Sig</span>}
+                            {r.notarization_required && <span className="px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-medium">Notary</span>}
+                            {!r.signature_required && !r.notarization_required && '—'}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 text-gray-600">{r.template_reference || '—'}</td>
+                        <td className="py-2 pr-3 text-gray-600">{r.required_file_format || '—'}</td>
+                        <td className="py-2 pr-3 text-gray-600">{r.number_of_copies || '—'}</td>
+                        <td className="py-2 pr-3">
+                          {r.on_file
+                            ? <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold">On File</span>
+                            : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-medium">Needed</span>}
+                        </td>
+                        <td className="py-2 text-gray-500 max-w-xs">{r.notes || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -768,13 +768,19 @@ Status: {opp.status}"""
             # by richer, category-classified data instead of one freeform pass.
             checklist_lines = []
             for req in requirements:
-                if not req.get("required", True):
-                    continue
                 name = (req.get("document_name") or "").strip()
                 if not name:
                     continue
-                suffix = " [ON FILE]" if req.get("on_file") else ""
-                checklist_lines.append(f"- {name}{suffix}")
+                # Conditional items ("if applicable", "if any") come back with
+                # required=false. They are NOT dropped — a solicitation item
+                # nobody ever sees is exactly the miss this feature exists to
+                # prevent. Surface it flagged so a human decides it doesn't
+                # apply, rather than silently deciding for them.
+                conditional = "" if req.get("required", True) else " (if applicable)"
+                # [ON FILE] must stay the LAST suffix — parseChecklistItems
+                # matches it anchored to end-of-line.
+                on_file = " [ON FILE]" if req.get("on_file") else ""
+                checklist_lines.append(f"- {name}{conditional}{on_file}")
             if checklist_lines:
                 opp.submission_checklist = "\n".join(checklist_lines)
 

@@ -328,6 +328,7 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
                   <th className="text-left py-2 pr-3 font-semibold">Document Name</th>
                   <th className="text-left py-2 pr-3 font-semibold">Category</th>
                   <th className="text-left py-2 pr-3 font-semibold">Mandatory</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Due Before</th>
                   <th className="text-left py-2 pr-3 font-semibold">Section</th>
                   <th className="text-left py-2 pr-3 font-semibold">Page</th>
                   <th className="text-left py-2 pr-3 font-semibold">Sig / Notary</th>
@@ -347,6 +348,11 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
                       {r.mandatory
                         ? <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">Mandatory</span>
                         : <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 text-[10px] font-medium">Optional</span>}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {r.due_before_submission
+                        ? <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 text-[10px] font-semibold whitespace-nowrap">Before deadline</span>
+                        : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="py-2 pr-3 text-gray-600">{r.proposal_section || '—'}</td>
                     <td className="py-2 pr-3 text-gray-600">{r.page_number || '—'}</td>

@@ -300,6 +300,30 @@ def fit_documents_to_budget(documents_text: str, max_chars: int) -> "tuple[str, 
     return documents_text[:half] + "\n\n" + marker + "\n\n" + documents_text[-half:], True
 
 
+RETRY_ATTEMPTS = 4
+RETRY_BACKOFF_SECONDS = 2
+
+# Error classes worth retrying: a blip, a rate limit, or a server-side 5xx.
+# Matched on the exception's type name and message so this keeps working
+# across openai-python versions without pinning to their exception tree.
+_TRANSIENT_ERROR_MARKERS = (
+    "connection error", "connection reset", "connection aborted",
+    "timeout", "timed out", "rate limit", "429",
+    "500", "502", "503", "504", "bad gateway", "service unavailable",
+    "overloaded", "temporarily unavailable", "remote end closed",
+)
+
+
+def _is_transient_error(e: Exception) -> bool:
+    """True for failures a retry can plausibly fix. Auth errors, malformed
+    requests, and context_length_exceeded are permanent — retrying those just
+    burns time and money, so they fall through and raise on the first try."""
+    text = f"{type(e).__name__} {e}".lower()
+    if "context_length" in text or "invalid_api_key" in text or "authentication" in text:
+        return False
+    return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
+
+
 def call_openai(
     prompt: str,
     system: str = SYSTEM_PROMPT,
@@ -308,6 +332,7 @@ def call_openai(
     temperature: float = None,
 ) -> str:
     import traceback as _tb
+    import time as _time
     prompt = fit_prompt_to_budget(system, prompt, max_tokens)
     try:
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -316,19 +341,35 @@ def call_openai(
     kwargs = {}
     if temperature is not None:
         kwargs["temperature"] = temperature
-    try:
-        response = client.chat.completions.create(
-            model=model or MODEL,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            **kwargs,
-        )
-    except Exception as e:
-        raise RuntimeError(f"OpenAI API call failed: {e}\n{_tb.format_exc()}") from e
-    return response.choices[0].message.content or ""
+
+    # Retry transient failures before giving up. A real audit caught a single
+    # "Connection error" silently destroying an entire 35k chunk of a
+    # solicitation — the chunk holding the whole Vendor Questionnaire (20
+    # mandatory submittals). Recall must not depend on network luck: on the
+    # compliance path a dropped chunk means a bid goes out missing forms.
+    # Only transient classes are retried; auth failures and
+    # context_length_exceeded are permanent and re-raise immediately.
+    last_error = None
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            response = client.chat.completions.create(
+                model=model or MODEL,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                **kwargs,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            last_error = e
+            if not _is_transient_error(e) or attempt == RETRY_ATTEMPTS - 1:
+                break
+            _time.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt))
+    raise RuntimeError(
+        f"OpenAI API call failed after {RETRY_ATTEMPTS} attempt(s): {last_error}\n{_tb.format_exc()}"
+    ) from last_error
 
 
 def extract_json(text: str) -> Dict[str, Any]:
@@ -935,6 +976,7 @@ def extract_structured_checklist_for_documents(
     empty_result = {
         "requirements": [], "sections_identified": [], "extraction_summary": "No documents to analyze.",
         "input_truncated": False, "coverage_gaps": [], "documents_analyzed": [], "unverified_count": 0,
+        "failed_chunks": 0, "extraction_incomplete": False,
     }
     if not doc_texts:
         return empty_result
@@ -947,6 +989,7 @@ def extract_structured_checklist_for_documents(
     any_truncated = False
     documents_analyzed: List[Dict[str, Any]] = []
     all_coverage_gaps: List[Dict[str, Any]] = []
+    failed_chunks_total = 0
 
     for doc_text in doc_texts:
         filename, body_text = _split_doc_header(doc_text)
@@ -965,12 +1008,18 @@ def extract_structured_checklist_for_documents(
         anchors = scan_requirement_anchors(body_text)
         chunks = _chunk_document(body_text)
         doc_requirements: List[Dict[str, Any]] = []
+        doc_failed_chunks = 0
 
         for start, chunk_text in chunks:
             try:
                 anchors_text = render_anchors_for_prompt(anchors, start, start + len(chunk_text))
                 result = extract_structured_checklist(opportunity_context, chunk_text, anchors_text)
             except Exception as e:
+                # A failed chunk is a HOLE in the checklist, not a footnote.
+                # Count it so the caller can refuse to present this as a
+                # complete review — see extraction_incomplete below.
+                doc_failed_chunks += 1
+                failed_chunks_total += 1
                 summaries.append(f"[A chunk of {filename} failed to analyze: {e}]")
                 continue
             if result.get("input_truncated"):
@@ -1021,6 +1070,7 @@ def extract_structured_checklist_for_documents(
         documents_analyzed.append({
             "name": filename, "role": role, "chunks": len(chunks),
             "requirements_found": len(verified_requirements),
+            "chunks_failed": doc_failed_chunks,
         })
 
         all_coverage_gaps.extend(compute_coverage_gaps(anchors, verified_requirements, body_text))
@@ -1028,11 +1078,24 @@ def extract_structured_checklist_for_documents(
     all_coverage_gaps = all_coverage_gaps[:40]
     unverified_count = sum(1 for r in all_requirements if r.get("quote_verified") is False)
 
-    extraction_summary = (
-        f"Analyzed {len(doc_texts)} document(s) individually (chunked, with per-document role "
-        "classification and code-side source-quote verification) to ensure each was fully reviewed. "
-        + " ".join(summaries)
-    ).strip()
+    # Never claim a full review when part of a document was lost. The audit
+    # that prompted this found a transient connection error destroying the
+    # chunk containing an entire Vendor Questionnaire (20 mandatory
+    # submittals) while the summary still read "to ensure each was fully
+    # reviewed" — reassuring text over a hole in the checklist is exactly how
+    # a bid goes out missing forms.
+    if failed_chunks_total:
+        lead = (
+            f"⚠ INCOMPLETE — {failed_chunks_total} section(s) of the uploaded documents could not be "
+            "analyzed, so requirements stated in them are MISSING from this checklist. Re-run the AI "
+            "review before relying on it. "
+        )
+    else:
+        lead = (
+            f"Analyzed {len(doc_texts)} document(s) individually (chunked, with per-document role "
+            "classification and code-side source-quote verification) to ensure each was fully reviewed. "
+        )
+    extraction_summary = (lead + " ".join(summaries)).strip()
 
     return {
         "requirements": all_requirements,
@@ -1042,6 +1105,8 @@ def extract_structured_checklist_for_documents(
         "coverage_gaps": all_coverage_gaps,
         "documents_analyzed": documents_analyzed,
         "unverified_count": unverified_count,
+        "failed_chunks": failed_chunks_total,
+        "extraction_incomplete": bool(failed_chunks_total),
     }
 
 

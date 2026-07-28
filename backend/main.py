@@ -795,6 +795,17 @@ Status: {opp.status}"""
                 + f" {unverified_count} requirement(s) could not be verified against the source "
                 "text and are marked [UNVERIFIED] — confirm these manually before relying on them."
             )
+        # Prepended LAST so it lands at the very front: a section that failed
+        # to analyze outranks every other caveat here. An audit caught one
+        # transient connection error silently dropping a solicitation's entire
+        # Vendor Questionnaire (20 mandatory submittals) while the summary
+        # still read as a clean, complete review.
+        if structured.get("extraction_incomplete"):
+            structured["extraction_summary"] = (
+                f"⚠ THIS CHECKLIST IS INCOMPLETE — {structured.get('failed_chunks')} section(s) of "
+                "the uploaded documents could not be analyzed, so any requirement stated only in "
+                "those sections is missing below. Re-run the AI review before submitting. "
+            ) + (structured.get("extraction_summary") or "")
         if requirements or coverage_gaps or structured.get("documents_analyzed"):
             opp.structured_checklist = json.dumps(structured)
 

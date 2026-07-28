@@ -14,122 +14,120 @@
 # markdown file.
 
 # 1. Mandatory-language keywords — obligation language that signals a hard requirement.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 MANDATORY_LANGUAGE_KEYWORDS = [
-    "shall", "must", "required", "mandatory", "shall submit", "shall provide",
-    "shall include", "is required to", "will be required", "failure to comply",
-    "non-negotiable", "compulsory", "obligatory", "shall be submitted",
-    "must be submitted", "required to submit", "shall not exceed",
-    "must include", "shall demonstrate", "shall furnish",
+    "required", "shall", "must", "mandatory", "submit", "include", "provide",
+    "complete", "attach", "furnish", "enclose", "deliver", "upload",
+    "proposal shall contain", "required documents", "required forms",
+    "failure to provide", "non-responsive", "responsive bidder",
+    "submission requirements",
 ]
 
 # 2. Proposal-section keywords — names of the sections an RFP organizes itself into.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 PROPOSAL_SECTION_KEYWORDS = [
     "proposal requirements", "submission instructions", "proposal format",
-    "required attachments", "evaluation criteria", "volume i", "volume ii",
-    "volume iii", "technical proposal", "cost proposal", "price proposal",
-    "management proposal", "executive summary", "scope of work",
-    "statement of work", "instructions to offerors", "instructions to bidders",
-    "proposal organization", "table of contents", "proposal contents",
-    "general requirements", "special conditions", "terms and conditions",
+    "proposal organization", "proposal contents", "required attachments",
+    "required forms", "administrative requirements", "compliance requirements",
+    "technical proposal", "cost proposal", "qualifications",
+    "evaluation criteria", "appendices", "exhibits", "attachments", "forms",
+    "schedules",
 ]
 
 # 3. Administrative documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 ADMINISTRATIVE_DOCUMENT_KEYWORDS = [
-    "letter of transmittal", "cover letter", "cover sheet", "signature page",
-    "acknowledgement of addenda", "addendum acknowledgement", "bid bond",
-    "proposal bond", "vendor registration", "company profile",
-    "organizational chart", "business license", "conflict of interest disclosure",
-    "conflict of interest statement", "letter of intent", "questionnaire",
-    "vendor application", "proposal checklist",
+    "cover letter", "letter of transmittal", "executive summary",
+    "company profile", "firm profile", "capability statement",
+    "corporate overview", "business information", "organization information",
 ]
 
 # 4. Certifications / compliance forms.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 CERTIFICATION_COMPLIANCE_KEYWORDS = [
-    "non-collusion affidavit", "certificate of non-collusion", "debarment certification",
-    "certification regarding debarment", "suspension certification",
-    "equal employment opportunity certification", "eeo certification",
-    "affirmative action certification", "drug-free workplace certification",
-    "lobbying certification", "certification of independent price determination",
-    "mbe certification", "wbe certification", "sbe certification", "dbe certification",
-    "hipaa compliance certification", "conflict of interest certification",
-    "iran certification", "boycott certification", "living wage certification",
+    "equal opportunity certification", "non-collusion affidavit",
+    "conflict of interest certification", "ethics certification",
+    "debarment certification", "anti-lobbying certification",
+    "drug-free workplace certification", "compliance certification",
+    "disclosure statements",
 ]
 
 # 5. Legal / registration documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 LEGAL_REGISTRATION_KEYWORDS = [
-    "w-9", "w9", "articles of incorporation", "articles of organization",
-    "certificate of good standing", "business registration", "sam.gov registration",
-    "uei", "unique entity id", "cage code", "duns number", "state registration",
-    "trade name registration", "operating agreement", "business license number",
-    "federal tax id", "ein", "taxpayer identification number",
+    "business license", "articles of incorporation", "articles of organization",
+    "certificate of good standing", "w-9", "ein", "uei", "sam registration",
+    "duns", "mbe", "dbe", "wbe", "sbe certifications",
+    "certificates of insurance", "bonding documentation", "performance bonds",
+    "bid bonds", "payment bonds",
 ]
 
 # 6. Technical proposal documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 TECHNICAL_PROPOSAL_KEYWORDS = [
-    "technical approach", "work plan", "project plan", "methodology",
-    "implementation plan", "transition plan", "quality assurance plan",
-    "risk management plan", "staffing plan", "schedule of deliverables",
-    "project timeline", "gantt chart", "technical narrative",
-    "solution architecture", "performance work statement",
+    "technical proposal", "technical approach", "management approach",
+    "methodology", "project plan", "work plan", "staffing plan",
+    "organizational chart", "communication plan", "quality assurance plan",
+    "risk management plan", "change management plan", "transition plan",
+    "implementation plan", "project schedule", "gantt chart", "deliverables",
+    "milestones",
 ]
 
 # 7. Experience / personnel documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 EXPERIENCE_PERSONNEL_KEYWORDS = [
-    "resumes", "resumes of key personnel", "key personnel", "staff qualifications",
-    "past performance references", "references", "client references",
-    "case studies", "organizational experience", "corporate experience",
-    "personnel qualifications", "key staff bios", "letters of recommendation",
-    "similar project experience", "subcontractor experience",
+    "relevant experience", "past performance", "references",
+    "client references", "similar projects", "case studies", "key personnel",
+    "staff qualifications", "team resumes", "professional certifications",
+    "organizational experience",
 ]
 
 # 8. Pricing documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 PRICING_DOCUMENT_KEYWORDS = [
-    "price proposal", "cost proposal", "pricing schedule", "rate schedule",
-    "fee schedule", "budget narrative", "cost breakdown", "line-item budget",
-    "price sheet", "cost/price proposal", "labor rate schedule",
-    "cost proposal form", "budget justification",
+    "price proposal", "cost proposal", "financial proposal", "pricing sheet",
+    "fee schedule", "budget", "labor rates", "rate card", "cost breakdown",
+    "compensation schedule", "bid forms",
 ]
 
 # 9. Attachments and forms.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 ATTACHMENT_FORM_KEYWORDS = [
-    "attachment a", "attachment b", "attachment c", "attachment d",
-    "exhibit a", "exhibit b", "exhibit c", "form a", "form b", "form c",
-    "appendix a", "appendix b", "schedule a", "schedule b",
-    "required form", "attachment", "exhibit", "appendix", "template",
+    "attachment a", "attachment b", "attachment c", "exhibit a", "exhibit b",
+    "schedule a", "appendix a", "form a", "form b", "required forms",
+    "signature pages", "acknowledgement forms",
 ]
 
 # 10. Compliance language — phrasing used to state general obligations/conditions.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 COMPLIANCE_LANGUAGE_KEYWORDS = [
-    "in accordance with", "compliance with", "subject to", "as specified herein",
-    "pursuant to", "in conformance with", "at a minimum", "no exceptions",
-    "responsive and responsible", "responsiveness requirement",
-    "non-compliance may result in", "grounds for rejection", "grounds for disqualification",
+    "completed and signed", "executed copy", "duly executed",
+    "original signature", "authorized representative", "must be completed",
+    "complete and return", "failure to submit", "proposal may be rejected",
+    "proposal will be deemed non-responsive", "include at a minimum",
+    "submit the following",
 ]
 
 # 11. Insurance requirements.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 INSURANCE_KEYWORDS = [
-    "certificate of insurance", "coi", "general liability insurance",
-    "professional liability insurance", "errors and omissions", "e&o insurance",
-    "workers compensation insurance", "workers' compensation", "automobile liability insurance",
-    "umbrella liability insurance", "cyber liability insurance",
-    "additional insured endorsement", "acord 25", "insurance certificate",
+    "general liability", "professional liability", "errors and omissions",
+    "cyber liability", "workers compensation", "automobile liability",
+    "umbrella coverage", "certificate of insurance",
 ]
 
 # 12. Financial documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 FINANCIAL_DOCUMENT_KEYWORDS = [
-    "audited financial statements", "financial statements", "bank reference letter",
-    "line of credit letter", "dun & bradstreet report", "financial capacity",
-    "balance sheet", "profit and loss statement", "annual report",
-    "bonding capacity letter", "surety letter", "proof of financial stability",
+    "financial statements", "audited financial statements", "balance sheet",
+    "income statement", "bank letter", "financial capacity", "bonding letter",
 ]
 
 # 13. Contract documents.
+# Bernedette Atong's exact terms, verbatim from her 2026-07-28 feedback email.
 CONTRACT_DOCUMENT_KEYWORDS = [
-    "sample contract", "draft contract", "contract terms and conditions",
-    "master services agreement", "teaming agreement", "subcontractor agreement",
-    "non-disclosure agreement", "nda", "indemnification clause",
-    "termination clause", "contract exhibit", "standard contract provisions",
-    "professional services agreement",
+    "sample contract", "terms and conditions", "contract exceptions",
+    "redlines", "contract acceptance", "exceptions matrix",
 ]
 
 # Human-readable category name -> keyword list, in Bernedette's original order.

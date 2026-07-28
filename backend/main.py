@@ -725,7 +725,7 @@ def review_documents_endpoint(
     if not opp.documents:
         raise HTTPException(status_code=400, detail="No documents uploaded to review")
     from document_processor import process_document, truncate_for_ai
-    from ai_screener import review_documents, extract_structured_checklist
+    from ai_screener import review_documents, extract_structured_checklist_for_documents
     doc_texts = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
@@ -764,7 +764,13 @@ Status: {opp.status}"""
     # failure, log and continue with just the existing flat extraction, same
     # defensive pattern review_documents() already uses for its own parsing.
     try:
-        structured = extract_structured_checklist(opp_context, combined_doc_text)
+        # Per-document, not combined-then-truncated — see
+        # extract_structured_checklist_for_documents()'s docstring. Each
+        # doc_texts entry is already individually capped at 200k chars above,
+        # comfortably inside one call's budget, so this needs no truncation
+        # for any realistic single document instead of forcing all uploaded
+        # documents to compete for one shared budget.
+        structured = extract_structured_checklist_for_documents(opp_context, doc_texts)
         requirements = structured.get("requirements") or []
         if structured.get("input_truncated"):
             warning = ("⚠ Some uploaded document content was cut to fit this analysis — the "

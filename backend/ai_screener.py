@@ -185,36 +185,113 @@ def doc_char_budget(system: str, prompt_overhead: str, max_tokens: int) -> int:
     return max(400, ceiling - used) * 4
 
 
+# High-signal, multi-word phrases from PROPOSAL_SECTION_KEYWORDS (never the
+# single generic words like "forms"/"attachments" — those false-positive
+# throughout a document). Used as anchors so the section that actually states
+# submission requirements is preserved regardless of where it falls, instead
+# of surviving or not by the luck of head/tail position.
+_REQUIREMENTS_SECTION_ANCHORS = [
+    "proposal requirements", "submission instructions", "proposal format",
+    "proposal organization", "proposal contents", "required attachments",
+    "administrative requirements", "compliance requirements",
+]
+
+
+def _find_priority_windows(text: str, window_chars: int = 45000) -> "list[tuple[int, int]]":
+    """Spans around every occurrence of a requirements-section anchor phrase,
+    merged where they overlap. A document's own table of contents can trigger
+    a spurious early match, so this keeps ALL occurrences (a real section
+    heading tends to repeat the phrase again later) rather than only the
+    first — see the caller docstring for why this is a mitigation, not a
+    guarantee."""
+    lower = text.lower()
+    spans = []
+    for phrase in _REQUIREMENTS_SECTION_ANCHORS:
+        start = 0
+        while True:
+            idx = lower.find(phrase, start)
+            if idx == -1:
+                break
+            spans.append((idx, min(len(text), idx + window_chars)))
+            start = idx + len(phrase)
+    if not spans:
+        return []
+    spans.sort()
+    merged = [spans[0]]
+    for s, e in spans[1:]:
+        last_s, last_e = merged[-1]
+        if s <= last_e:
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
 def fit_documents_to_budget(documents_text: str, max_chars: int) -> "tuple[str, bool]":
-    """Fit combined document text to max_chars for a single LLM call.
+    """Fit combined document text to max_chars for a single LLM call — the
+    LAST-RESORT safety net for the rare case where a single document (or a
+    caller that didn't process documents individually) still exceeds budget
+    on its own. The PRIMARY defense against losing content is
+    extract_structured_checklist_for_documents() processing each uploaded
+    document as its own call, so this function should rarely fire in
+    practice — but it must never fail silently when it does.
 
-    A real solicitation is routinely uploaded as multiple files (base RFP +
-    amendments + a specifications sheet), each already capped at 200k chars
-    on the way in. Three such files alone can exceed a single call's budget.
-    A naive documents_text[:max_chars] silently drops everything after the
-    cut — with opp.documents having no explicit order, that's whatever was
-    uploaded last, which for a real bid is often an amendment or the
-    attachments/requirements the reviewer added *because* they matter. And a
-    plain slice gives the model zero signal anything is missing, so it can
-    confidently report full coverage over a solicitation it only half saw.
-
-    Keeps the first and last halves (mirroring truncate_for_ai's head+tail
-    approach) and inserts a visible marker, so the model is told to hedge
-    rather than silently miss content, and returns whether truncation
-    happened so the caller can warn a human too.
+    Rather than a blind documents_text[:max_chars] (which drops everything
+    after the cut — with no ordering guarantee on multi-document input, that
+    could be exactly the amendment or attachments section that was added
+    because it mattered), this locates the requirements-section anchor
+    phrases and preserves text around them first, filling remaining budget
+    with head+tail of the rest. This is a heuristic, not a guarantee — a
+    document with no recognizable section headers, or one where the true
+    section falls entirely outside every anchor's window, can still lose
+    content. The visible marker exists specifically so that risk is never
+    silent.
     """
     if len(documents_text) <= max_chars:
         return documents_text, False
-    half = max_chars // 2
+
+    windows = _find_priority_windows(documents_text)
     dropped = len(documents_text) - max_chars
-    marker = (
-        f"\n\n[... {dropped:,} characters of the uploaded documents were cut here to fit this "
-        "review's size limit. Some requirements, sections, or attachments this solicitation "
-        "contains may NOT be reflected in what follows — do not treat this as complete coverage. "
-        "If in doubt about whether something was missed, say so rather than reporting the "
-        "document set as fully covered. ...]\n\n"
+    warn = (
+        f"[... {dropped:,}+ characters cut to fit this review's size limit. "
     )
-    return documents_text[:half] + marker + documents_text[-half:], True
+    if windows:
+        priority_budget = int(max_chars * 0.65)
+        head_tail_budget = max_chars - priority_budget
+        priority_parts, used = [], 0
+        for s, e in windows:
+            if used >= priority_budget:
+                break
+            chunk = documents_text[s:e]
+            remaining = priority_budget - used
+            if len(chunk) > remaining:
+                chunk = chunk[:remaining]
+            priority_parts.append(chunk)
+            used += len(chunk)
+        half = head_tail_budget // 2
+        head = documents_text[:half]
+        tail = documents_text[-half:] if half else ""
+        marker = (
+            warn + "Sections matching known proposal-requirements language were located and "
+            "preserved below, but other content — and possibly some requirements language this "
+            "scan didn't match — may be missing. Do not treat this as complete coverage if "
+            "anything looks incomplete. ...]"
+        )
+        fitted = (
+            head + "\n\n" + marker + "\n\n=== PRESERVED REQUIREMENTS-SECTION CONTENT ===\n"
+            + "\n\n[... other preserved section ...]\n\n".join(priority_parts)
+            + "\n\n=== DOCUMENT TAIL ===\n" + tail
+        )
+        return fitted, True
+
+    half = max_chars // 2
+    marker = (
+        warn + "No recognizable proposal-requirements section heading was found to prioritize, "
+        "so this is a plain head/tail cut — some requirements, sections, or attachments this "
+        "solicitation contains may NOT be reflected in what follows. Do not treat this as "
+        "complete coverage. ...]"
+    )
+    return documents_text[:half] + "\n\n" + marker + "\n\n" + documents_text[-half:], True
 
 
 def call_openai(prompt: str, system: str = SYSTEM_PROMPT, max_tokens: int = 4096) -> str:
@@ -588,6 +665,104 @@ def extract_structured_checklist(
         }
     result["input_truncated"] = was_truncated
     return result
+
+
+def _requirement_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def extract_structured_checklist_for_documents(
+    opportunity_context: str,
+    doc_texts: List[str],
+) -> Dict[str, Any]:
+    """The real fix for large multi-document solicitations: rather than
+    joining every uploaded document into one blob and truncating it to fit
+    one call's budget (which forces a compromise on ANY multi-document bid —
+    see fit_documents_to_budget's docstring for why smarter truncation only
+    repositions the blind spot, it doesn't remove it), this calls
+    extract_structured_checklist() ONCE PER DOCUMENT and merges the results.
+
+    Each document is already capped at 200k chars on upload (~50k tokens),
+    comfortably inside a single call's ~478k-char budget — so for any
+    realistic single document, this function needs NO truncation at all.
+    fit_documents_to_budget() still runs inside each per-document call as a
+    last-resort safety net for the rare single document that is itself
+    enormous, but it should almost never fire.
+
+    Costs one OpenAI call per document instead of one call total — a
+    deliberate trade of a few extra cents and seconds per review for actually
+    guaranteeing every uploaded document gets fully seen, which is the whole
+    point of this feature.
+    """
+    if not doc_texts:
+        return {"requirements": [], "sections_identified": [], "extraction_summary": "No documents to analyze.", "input_truncated": False}
+
+    all_requirements: List[Dict[str, Any]] = []
+    seen_keys: Dict[str, int] = {}  # requirement key -> index in all_requirements
+    all_sections: List[str] = []
+    seen_sections = set()
+    summaries = []
+    any_truncated = False
+    any_succeeded = False
+
+    for doc_text in doc_texts:
+        try:
+            result = extract_structured_checklist(opportunity_context, doc_text)
+        except Exception as e:
+            summaries.append(f"[A document failed to analyze: {e}]")
+            continue
+        any_succeeded = True
+        if result.get("input_truncated"):
+            any_truncated = True
+        for section in (result.get("sections_identified") or []):
+            key = section.strip().lower()
+            if key and key not in seen_sections:
+                seen_sections.add(key)
+                all_sections.append(section)
+        summary = (result.get("extraction_summary") or "").strip()
+        if summary:
+            summaries.append(summary)
+        for req in (result.get("requirements") or []):
+            name = (req.get("document_name") or "").strip()
+            if not name:
+                continue
+            key = _requirement_key(name)
+            if key in seen_keys:
+                # Same requirement named in more than one document (e.g. an
+                # amendment restates a W-9 requirement already in the base
+                # RFP) — merge rather than duplicate. Never let a duplicate
+                # silently downgrade a flag another source already set.
+                existing = all_requirements[seen_keys[key]]
+                for flag in ("required", "mandatory", "due_before_submission",
+                             "signature_required", "notarization_required", "on_file"):
+                    if req.get(flag):
+                        existing[flag] = True
+                for text_field in ("proposal_section", "page_number", "template_reference",
+                                   "required_file_format", "number_of_copies", "notes"):
+                    if not existing.get(text_field) and req.get(text_field):
+                        existing[text_field] = req.get(text_field)
+            else:
+                seen_keys[key] = len(all_requirements)
+                all_requirements.append(dict(req))
+
+    if not any_succeeded:
+        return {
+            "requirements": [], "sections_identified": [],
+            "extraction_summary": "Structured checklist extraction failed for every uploaded document.",
+            "input_truncated": False,
+        }
+
+    extraction_summary = (
+        f"Analyzed {len(doc_texts)} document(s) individually to ensure each was fully reviewed. "
+        + " ".join(summaries)
+    ).strip()
+
+    return {
+        "requirements": all_requirements,
+        "sections_identified": all_sections,
+        "extraction_summary": extraction_summary,
+        "input_truncated": any_truncated,
+    }
 
 
 # ─── Pre-submission gap check (step 5 of Bernedette's workflow) ────────────

@@ -729,6 +729,83 @@ def format_opportunity_context(opp: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_STRUCTURED_REQ_LIMIT = 40
+
+
+def _structured_requirements_context(opp: Dict[str, Any]) -> str:
+    """Compact projection of the 12-field structured checklist for the writer.
+
+    Closes the last item of Bernedette's 2026-07-28 feedback ("The Checklist can
+    also be used to enhance the proposal builder"). The extraction already
+    captures which submittals need a signature or notarization, which are due
+    before submission, their template reference, file format and copy count —
+    and, importantly, the FORMAT/STRUCTURAL requirements (volume split, tab
+    order, page limits) that decide how the proposal must be organized. None of
+    that reached the writer, which is the same class of miss that got a real
+    bid rejected for wrong volume structure.
+
+    Deliberately conservative — proposal quality is already approved and must
+    not regress:
+      * returns "" when there is no structured checklist, so behaviour for
+        existing opportunities is unchanged;
+      * one compact line per requirement, not the full JSON;
+      * capped at _STRUCTURED_REQ_LIMIT so a noisy 145-item extraction cannot
+        crowd out the knowledge base and voice guidance in the prompt.
+    """
+    raw = opp.get("structured_checklist")
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        requirements = (data or {}).get("requirements") or []
+    except (ValueError, TypeError, AttributeError):
+        return ""
+    if not requirements:
+        return ""
+
+    # Structural requirements first — they govern how the proposal is organised
+    # (volumes, tabs, page limits), so the writer needs them before the list of
+    # things to attach.
+    def _sort_key(req: Dict[str, Any]) -> tuple:
+        structural = (req.get("category") or "") == "Proposal Section Keywords"
+        return (0 if structural else 1, 0 if req.get("mandatory") else 1)
+
+    lines = []
+    for req in sorted(requirements, key=_sort_key)[:_STRUCTURED_REQ_LIMIT]:
+        name = (req.get("document_name") or "").strip()
+        if not name:
+            continue
+        flags = []
+        if req.get("template_reference"):
+            flags.append(str(req["template_reference"]))
+        if not req.get("required", True):
+            flags.append("if applicable")
+        if req.get("signature_required"):
+            flags.append("signature required")
+        if req.get("notarization_required"):
+            flags.append("notarized")
+        if req.get("due_before_submission"):
+            flags.append("due before submission")
+        if req.get("required_file_format"):
+            flags.append(str(req["required_file_format"]))
+        if req.get("number_of_copies"):
+            flags.append(f"{req['number_of_copies']} copies")
+        if req.get("quote_verified") is False:
+            flags.append("UNVERIFIED - confirm manually")
+        suffix = f" [{'; '.join(flags)}]" if flags else ""
+        lines.append(f"- {name} ({req.get('category') or 'Uncategorized'}){suffix}")
+
+    if not lines:
+        return ""
+    header = (
+        "Structured Requirements (extracted from the RFP — organise the proposal to satisfy these; "
+        "any 'Proposal Section' items define required volume/tab structure and page limits)"
+    )
+    extra = len(requirements) - len(lines)
+    footer = f"\n  ...and {extra} more — see the full checklist." if extra > 0 else ""
+    return f"{header}:\n" + "\n".join(lines) + footer
+
+
 def _compliance_context(opp: Dict[str, Any]) -> str:
     """Compact compliance/submission data for the decision brief."""
     lines = []
@@ -749,6 +826,9 @@ def _compliance_context(opp: Dict[str, Any]) -> str:
         val = opp.get(key)
         if val:
             lines.append(f"{label}: {_fmt_field_value(val)}")
+    structured = _structured_requirements_context(opp)
+    if structured:
+        lines.append(structured)
     return "\n".join(lines) or "No compliance data extracted."
 
 

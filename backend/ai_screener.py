@@ -806,7 +806,21 @@ A deterministic keyword scan (not an AI) flagged the lines below in THIS excerpt
 VENDOR QUESTIONNAIRE / MINIMUM QUALIFICATIONS ITEMS COUNT TOO: a line marked "*Response required" (or similar — "must answer", "must respond") is a checklist requirement EVEN WHEN the required response is a narrative answer, an attestation, a yes/no confirmation, or a list of facts (e.g. years of experience, project history, a non-affiliation attestation) rather than a file upload. Do not silently treat these as "just a question to answer inline" and skip them — emit each one as its own requirement record (document_name can describe the response being required, e.g. "Turnkey AMI Project Experience Documentation", "Non-Affiliation Attestation", "Statement of Years of Firm Experience").
 {anchors_text}
 
-FORMAT / STRUCTURAL REQUIREMENTS ARE IN SCOPE. Page limits, tab/volume structure, page numbering, PDF bookmarking, number of copies, and "submit X separately from Y" are themselves requirements — a wrong volume structure has caused a real rejected FaithForge bid. Emit these with `"category": "Proposal Section Keywords"` and a `document_name` that names the constraint, e.g. "Technical Proposal — 60 page limit", "Proposal tabbed into TAB 1-7", "Price Proposal submitted separately from Technical Proposal".
+FORMAT / STRUCTURAL REQUIREMENTS ARE IN SCOPE — AND ARE THE MOST COMMONLY MISSED. A real FaithForge bid was rejected for a wrong volume structure, not for a missing form. Before you finish, scan this excerpt AGAIN specifically for each of the following, and emit one requirement for every one that appears. Missing these is a failure even if every attachment was found:
+  1. Page limits ("shall not exceed N pages", "no more than N single-sided pages")
+  2. Page numbering ("consecutively numbered", "numbered from beginning to end", "all pages shall be numbered")
+  3. Tab / section structure ("separated by a TAB", "TAB A", "Tab 1", "tabbed into the specified sections", a listing of Tab A..Tab Q)
+  4. Volume structure ("Volume I", "Volume II", "separate volumes", "separate envelopes", "double envelope")
+  5. Separate submission ("submit separately from", "shall not be included in the Technical Proposal", "omit all pricing from Volume I")
+  6. File format ("searchable Adobe PDF", "Excel format", "a second copy with confidential information redacted")
+  7. PDF bookmarking ("bookmarked to enable navigation")
+  8. Number of copies ("one original and N copies")
+  9. Delivery channel ("only via eMMA", "hand delivery only", "email will not be accepted")
+Emit each with `"category": "Proposal Section Keywords"` and a `document_name` naming the constraint, e.g. "Technical Proposal — 60 page limit", "Proposal tabbed into TAB A-Q", "All pages consecutively numbered", "Price Proposal submitted separately from Technical Proposal", "Technical Proposal in searchable PDF + redacted copy".
+
+ONE REQUIREMENT PER DOCUMENT, NOT PER FIELD. If several lines are fields, signature blocks, or numbered clauses INSIDE a single named form, emit ONE requirement for that form — not one per line. For example a Bid/Proposal Affidavit containing "Affirmation Regarding Bribery Convictions", "Affirmation Regarding Collusion", "Signature of Authorized Representative" and "Printed Name of Affiant" is ONE requirement ("Bid/Proposal Affidavit"), with the notable sub-parts summarized in `notes`. Splitting a form into its own fields buries the real checklist in noise.
+
+SUBMITTALS ONLY — NOT ONGOING CONTRACT PERFORMANCE. Extract what the offeror submits WITH THE PROPOSAL, plus one-time documents explicitly required upon notice of award (e.g. a Contract Affidavit, an NDA, an insurance certificate due within N days of award) — mark those `"due_before_submission": false` and say so in `notes`. Do NOT emit recurring obligations performed AFTER award during the contract term: monthly invoices, timesheets, quarterly or annual reports, notices of claim, price-adjustment requests, personnel substitution requests, performance-evaluation forms. Those are contract administration, not checklist items.
 
 STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classify requirements):
 {keyword_library}
@@ -857,7 +871,13 @@ def extract_structured_checklist(
     "what's on file" comparison (here reused via load_standing_documents()
     directly, now producing a boolean per-item instead of a text suffix).
     """
-    max_tokens = 4096
+    # 8000, not 4096: each requirement costs ~150 output tokens (12 fields plus
+    # a verbatim source_quote), so 4096 capped a chunk at ~27 requirements — and
+    # a dense one (a Vendor Questionnaire chunk emitted 20 on its own) could hit
+    # the ceiling mid-JSON. Truncated JSON does not parse, and an unparseable
+    # response now raises, which would cost the entire chunk. Output tokens on
+    # mini are cheap; a lost chunk is not.
+    max_tokens = 8000
     keyword_library = render_keyword_library_for_prompt()
     standing_documents = load_standing_documents()
     overhead = STRUCTURED_CHECKLIST_PROMPT.format(
@@ -885,11 +905,19 @@ def extract_structured_checklist(
     raw = call_openai(prompt, max_tokens=max_tokens, model=EXTRACTION_MODEL, temperature=0)
     result = extract_json(raw)
     if not result or "requirements" not in result:
-        result = {
-            "requirements": [],
-            "sections_identified": [],
-            "extraction_summary": "Structured checklist extraction failed to parse AI response.",
-        }
+        # RAISE rather than return an empty result. Returning {} here made an
+        # unparseable response indistinguishable from "this chunk genuinely
+        # contained no requirements" — the chunk vanished from the checklist
+        # while the review still reported itself complete. That is the same
+        # silent-loss failure a transient connection error caused, and the
+        # caller already knows how to handle it: the orchestrator counts a
+        # raised chunk in failed_chunks and marks the whole extraction
+        # INCOMPLETE, so a human is told to re-run instead of trusting a
+        # checklist with a hole in it.
+        raise RuntimeError(
+            "Structured checklist extraction returned an unparseable response "
+            f"({len(raw or '')} chars) — chunk not analyzed."
+        )
     result["input_truncated"] = was_truncated
     return result
 

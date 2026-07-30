@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Upload, FileSpreadsheet, Link as LinkIcon, Loader2, AlertCircle, CheckCircle2,
   Sparkles, Mail, Send, Pencil, Check, X, ChevronRight, ChevronLeft, RefreshCw,
-  Users, AlertTriangle, Clock, Search, Ban, Reply,
+  Users, AlertTriangle, Clock, Search, Ban, Reply, Inbox,
 } from 'lucide-react'
 import {
   outreachPreviewFile, outreachPreviewGoogleSheet, outreachCommitImport,
@@ -492,183 +492,130 @@ export default function BulkOutreach() {
         </div>
       )}
 
-      {/* Never-contacted leads — visible on any step. Covers leads left over
-          from an earlier import that were never emailed; previously only the
-          accounts committed in the current upload session could be drafted. */}
-      {uncontacted && (uncontacted.ready_total > 0 || uncontacted.already_drafted_total > 0) && (
-        <div className="card p-5 space-y-4 border-2 border-blue-200 bg-blue-50/40">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
+      {/* Your queue — one panel instead of three stacked banners. Everything
+          waiting on a human is a compact row: drafts to review, leads never
+          contacted, follow-ups due. Renders only when there is work, so a
+          clean queue costs almost no vertical space. */}
+      {(uncontacted || dueTotals) && (() => {
+        const draftCount = uncontacted?.already_drafted_total || 0
+        const readyCount = uncontacted?.ready_total || 0
+        const dueSteps = [1, 2, 3, 4].filter(n => (dueDetail[String(n)] || []).length > 0)
+        const dueCount = dueSteps.reduce((a, n) => a + (dueDetail[String(n)] || []).length, 0)
+        const skipped = uncontacted?.missing_email || 0
+        const busy = uncontactedLoading || dueLoading
+        const refreshAll = () => { refreshUncontacted(); refreshDueCounts() }
+
+        if (draftCount === 0 && readyCount === 0 && dueCount === 0) {
+          return (
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
+              <p className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                <CheckCircle2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="truncate">
+                  Nothing waiting.
+                  {dueDiag && dueDiag.sent_live === 0 && dueDiag.sent_dry_run > 0 && ' Past sends were dry-run, so they never entered the follow-up sequence.'}
+                  {dueDiag && dueDiag.not_yet_due_total > 0 && ` ${dueDiag.not_yet_due_total} lead(s) in sequence — next follow-up in ${dueDiag.not_yet_due[0] ? dueDiag.not_yet_due[0].days_until_due : 0} day(s).`}
+                  {skipped > 0 && ` ${skipped} lead(s) have no email address.`}
+                </span>
+              </p>
+              <button onClick={refreshAll} disabled={busy} className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 shrink-0">
+                <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />Refresh
+              </button>
+            </div>
+          )
+        }
+
+        return (
+          <div className="card border-2 border-blue-200 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50/60 border-b border-blue-100">
               <p className="text-sm font-semibold text-blue-900 flex items-center gap-1.5">
-                <Mail className="w-4 h-4 text-blue-600" />
-                {uncontacted.ready_total} lead{uncontacted.ready_total === 1 ? '' : 's'} never contacted
+                <Inbox className="w-4 h-4 text-blue-600" />Your queue
               </p>
-              <p className="text-xs text-blue-700 mt-0.5">
-                From every import, not just your latest upload. Draft them all in one go — you still review and approve each email before anything sends.
-              </p>
-              <p className="text-xs text-blue-600/80 mt-1">
-                {uncontacted.already_drafted_total > 0 && (
-                  <span className="mr-3">{uncontacted.already_drafted_total} already drafted, awaiting review — not re-drafted.</span>
-                )}
-                {uncontacted.missing_email > 0 && uncontacted.ready_total === 0 && uncontacted.already_drafted_total === 0 && (
-                  <span className="mr-3">Nothing left to draft.</span>
-                )}
-                {uncontacted.missing_email > 0 && (
-                  <span className="mr-3">{uncontacted.missing_email} skipped: no email address.</span>
-                )}
-                {uncontacted.opted_out > 0 && <span>{uncontacted.opted_out} skipped: opted out.</span>}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={refreshUncontacted} disabled={uncontactedLoading} className="btn-secondary text-xs flex items-center gap-1.5">
-                <RefreshCw className={`w-3.5 h-3.5 ${uncontactedLoading ? 'animate-spin' : ''}`} />Refresh
-              </button>
-              {uncontacted.already_drafted_total > 0 && (
-                <button
-                  onClick={handleReviewExistingDrafts}
-                  disabled={draftingUncontacted}
-                  className="btn-primary text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                  Review &amp; send {uncontacted.already_drafted_total} draft{uncontacted.already_drafted_total === 1 ? '' : 's'}
-                </button>
-              )}
-              {uncontacted.ready_total > 0 && (
-                <button
-                  onClick={handleDraftUncontacted}
-                  disabled={draftingUncontacted}
-                  className={`text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${uncontacted.already_drafted_total > 0 ? 'btn-secondary' : 'btn-primary'}`}
-                >
-                  {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  Draft emails for all {uncontacted.ready_total}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {uncontacted.ready_total > 0 && (
-            <div className="bg-white rounded-lg border border-blue-200 p-3">
-              <ul className="space-y-1">
-                {uncontacted.ready.slice(0, 6).map(lead => (
-                  <li key={lead.account_id} className="text-xs text-gray-600 flex items-center justify-between gap-3">
-                    <span className="truncate">
-                      {lead.company_name}{lead.contact_name ? ` — ${lead.contact_name}` : ''}
-                    </span>
-                    <span className="shrink-0 text-gray-400 truncate max-w-[45%]">{lead.contact_email}</span>
-                  </li>
-                ))}
-                {uncontacted.ready_total > 6 && (
-                  <li className="text-xs text-gray-400">+{uncontacted.ready_total - 6} more</li>
-                )}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Nothing due — say WHY rather than rendering nothing at all. An empty
-          screen reads as "the follow-up feature is missing"; these are the
-          actual reasons the sequence has no work. */}
-      {dueTotals && !Object.values(dueTotals).some(n => n > 0) && dueDiag && (
-        <div className="card p-4 border border-gray-200 bg-gray-50/60">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-gray-400" />No follow-ups due right now
-              </p>
-              <ul className="text-xs text-gray-600 mt-1.5 space-y-1">
-                {dueDiag.sent_live === 0 && dueDiag.sent_dry_run > 0 && (
-                  <li className="text-amber-700">
-                    <strong>{dueDiag.sent_dry_run} email{dueDiag.sent_dry_run === 1 ? '' : 's'} were sent in dry-run mode.</strong> Dry-run sends never enter the follow-up sequence — only live sends start the clock. Switch send mode to live in Settings.
-                  </li>
-                )}
-                {dueDiag.sent_live === 0 && dueDiag.sent_dry_run === 0 && (
-                  <li>No emails have been sent yet, so there is nothing to follow up on.</li>
-                )}
-                {dueDiag.not_yet_due_total > 0 && (
-                  <li>
-                    {dueDiag.not_yet_due_total} lead{dueDiag.not_yet_due_total === 1 ? '' : 's'} waiting — next one due in{' '}
-                    {dueDiag.not_yet_due[0]?.days_until_due ?? 0} day{dueDiag.not_yet_due[0]?.days_until_due === 1 ? '' : 's'} (cadence: {(dueDiag.intervals || []).join(', ')} days).
-                  </li>
-                )}
-                {dueDiag.orphaned_awaiting_total > 0 && (
-                  <li className="text-amber-700">
-                    <strong>{dueDiag.orphaned_awaiting_total} lead{dueDiag.orphaned_awaiting_total === 1 ? '' : 's'} marked contacted but with no sent email on record</strong> ({dueDiag.orphaned_awaiting.slice(0, 3).map(o => o.company_name).join(', ')}
-                    {dueDiag.orphaned_awaiting_total > 3 ? ', …' : ''}). The sequence can't schedule a follow-up without a send date — check these manually.
-                  </li>
-                )}
-                {dueDiag.sent_live > 0 && dueDiag.awaiting_reply === 0 && (
-                  <li>{dueDiag.sent_live} live email{dueDiag.sent_live === 1 ? '' : 's'} sent, but no leads are awaiting a reply — they may have replied already or been closed.</li>
-                )}
-              </ul>
-            </div>
-            <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5 shrink-0">
-              <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Follow-up due alert — visible immediately on open, regardless of step */}
-      {dueTotals && Object.values(dueTotals).some(n => n > 0) && (
-        <div className="card p-5 space-y-4 border-2 border-amber-200 bg-amber-50/40">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">
-                <Reply className="w-4 h-4 text-amber-600" />Leads waiting on a follow-up
-              </p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                These haven't replied yet. Pick a step below to draft the next touch — you still review and approve every draft before anything sends.
-              </p>
-              {detectNotice && <p className="text-xs text-emerald-700 mt-1.5">{detectNotice}</p>}
-              {followUpNotice && <p className="text-xs text-amber-800 mt-1.5">{followUpNotice}</p>}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5">
-                <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
-              </button>
-              <button onClick={handleCheckReplies} disabled={detectLoading} className="btn-secondary text-sm px-4 flex items-center gap-2">
-                {detectLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                Check for replies
+              <button onClick={refreshAll} disabled={busy} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />Refresh
               </button>
             </div>
-          </div>
 
-          <div className="space-y-3">
-            {[1, 2, 3, 4].map(stepNum => {
-              const items = dueDetail[String(stepNum)] || []
-              if (items.length === 0) return null
-              const sorted = [...items].sort((a, b) => (b.days_waiting || 0) - (a.days_waiting || 0))
-              const shown = sorted.slice(0, 6)
-              const extra = sorted.length - shown.length
-              return (
-                <div key={stepNum} className="bg-white rounded-lg border border-amber-200 p-3">
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <p className="text-xs font-semibold text-gray-700">{SEQUENCE_STEP_LABELS[stepNum]} due · {items.length}</p>
-                    <button
-                      onClick={() => handleGenerateFollowUpStep(stepNum)}
-                      disabled={followUpLoading !== null}
-                      className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {followUpLoading === stepNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Reply className="w-3.5 h-3.5" />}
-                      Start {SEQUENCE_STEP_LABELS[stepNum]}
-                    </button>
+            <div className="divide-y divide-gray-100">
+              {draftCount > 0 && (
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{draftCount} draft{draftCount === 1 ? '' : 's'} ready to send</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Approve them all, then send in one go.</p>
                   </div>
-                  <ul className="space-y-1">
-                    {shown.map(item => (
-                      <li key={item.account_id} className="text-xs text-gray-600 flex items-center justify-between gap-3">
-                        <span className="truncate">{item.company_name}{item.contact_name ? ` — ${item.contact_name}` : ''}</span>
-                        <span className="shrink-0 text-gray-400">contacted {item.days_waiting} day{item.days_waiting === 1 ? '' : 's'} ago — please follow up</span>
-                      </li>
-                    ))}
-                    {extra > 0 && <li className="text-xs text-gray-400">+{extra} more</li>}
-                  </ul>
+                  <button onClick={handleReviewExistingDrafts} disabled={draftingUncontacted}
+                    className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0 disabled:opacity-40">
+                    {draftingUncontacted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+                    Review and send
+                  </button>
                 </div>
-              )
-            })}
+              )}
+
+              {readyCount > 0 && (
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{readyCount} lead{readyCount === 1 ? '' : 's'} never contacted</p>
+                    <p className="text-xs text-gray-500 mt-0.5">From every import, not just your latest upload.</p>
+                  </div>
+                  <button onClick={handleDraftUncontacted} disabled={draftingUncontacted}
+                    className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0 disabled:opacity-40">
+                    {draftingUncontacted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    Draft all {readyCount}
+                  </button>
+                </div>
+              )}
+
+              {dueSteps.map(stepNum => {
+                const items = [...(dueDetail[String(stepNum)] || [])].sort((a, b) => (b.days_waiting || 0) - (a.days_waiting || 0))
+                const shown = items.slice(0, 3)
+                return (
+                  <div key={stepNum} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800">
+                          {items.length} lead{items.length === 1 ? '' : 's'} due for {SEQUENCE_STEP_LABELS[stepNum]}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">No reply yet.</p>
+                      </div>
+                      <button onClick={() => handleGenerateFollowUpStep(stepNum)} disabled={followUpLoading !== null}
+                        className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0 disabled:opacity-40">
+                        {followUpLoading === stepNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Reply className="w-3.5 h-3.5" />}
+                        Draft {SEQUENCE_STEP_LABELS[stepNum]}
+                      </button>
+                    </div>
+                    <ul className="mt-2 space-y-0.5">
+                      {shown.map(item => (
+                        <li key={item.account_id} className="text-xs text-gray-500 flex items-center justify-between gap-3">
+                          <span className="truncate">{item.company_name}{item.contact_name ? ` — ${item.contact_name}` : ''}</span>
+                          <span className="shrink-0 text-gray-400">{item.days_waiting}d ago</span>
+                        </li>
+                      ))}
+                      {items.length > shown.length && (
+                        <li className="text-xs text-gray-400">+{items.length - shown.length} more</li>
+                      )}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
+
+            {(skipped > 0 || detectNotice || followUpNotice) && (
+              <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 space-y-0.5">
+                {skipped > 0 && <p className="text-xs text-gray-500">{skipped} lead{skipped === 1 ? '' : 's'} skipped — no email address on file.</p>}
+                {detectNotice && <p className="text-xs text-emerald-700">{detectNotice}</p>}
+                {followUpNotice && <p className="text-xs text-blue-700">{followUpNotice}</p>}
+              </div>
+            )}
+
+            <div className="px-4 py-2 border-t border-gray-100">
+              <button onClick={handleCheckReplies} disabled={detectLoading}
+                className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1.5">
+                {detectLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                Check inbox for replies
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* STEP: Upload */}
       {step === 'upload' && (

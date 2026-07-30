@@ -724,12 +724,28 @@ def review_documents_endpoint(
         raise HTTPException(status_code=404, detail="Opportunity not found")
     if not opp.documents:
         raise HTTPException(status_code=400, detail="No documents uploaded to review")
-    from document_processor import process_document, truncate_for_ai
+    from document_processor import process_document, truncate_for_ai, extraction_failed
     from ai_screener import review_documents, extract_structured_checklist_for_documents
+    os.makedirs(UPLOAD_PATH, exist_ok=True)
     doc_texts = []
+    unreadable = []
     for doc in opp.documents:
         text = process_document(doc.file_path, UPLOAD_PATH, doc.file_content)
+        # Refuse to hand an extractor error to the model as though it were the
+        # solicitation. A model given error text still returns a confident
+        # checklist of invented requirements — and if those come back marked
+        # on_file they auto-check and report the bid ready to submit. Failing
+        # loudly here is the only safe behaviour.
+        if extraction_failed(text):
+            unreadable.append(f"{doc.original_filename}: {(text or '').strip()[:200] or 'no text extracted'}")
+            continue
         doc_texts.append(f"=== {doc.original_filename} ===\n{truncate_for_ai(text, 200000)}")
+    if not doc_texts:
+        raise HTTPException(status_code=400, detail=(
+            "None of the uploaded files could be read, so no checklist was generated. "
+            + " | ".join(unreadable)
+            + " Re-upload the file(s) — a checklist built from unreadable input would be invented, not extracted."
+        ))
     opp_context = f"""Title: {opp.opportunity_title or opp.email_subject}
 Agency: {opp.agency_name}
 Solicitation: {opp.solicitation_number}

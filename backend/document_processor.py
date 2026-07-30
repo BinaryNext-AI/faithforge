@@ -104,12 +104,21 @@ def extract_xlsx_text(file_path: str) -> str:
 def extract_zip_contents(file_path: str, extract_dir: str) -> List[Dict]:
     extracted = []
     try:
+        # Create the target directory rather than assuming it exists. Render's
+        # filesystem is ephemeral, so UPLOAD_PATH can be gone after a restart or
+        # redeploy — the first inner file then failed with ENOENT, the whole zip
+        # came back as a 237-char "[ZIP extraction error: ...]" string, and that
+        # error text was handed to the model AS the solicitation. With nothing
+        # real to read it produced generic boilerplate (W-9, capability
+        # statement, certificate of insurance) marked on_file, which auto-checks
+        # and reports the bid ready to submit. Observed on a real opportunity.
+        os.makedirs(extract_dir, exist_ok=True)
         with zipfile.ZipFile(file_path, "r") as zf:
             for name in zf.namelist():
                 if name.endswith("/"):
                     continue
                 ext = Path(name).suffix.lower()
-                if ext not in {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt"}:
+                if ext not in {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt", ".pptx", ".ppt"}:
                     continue
                 safe_name = os.path.basename(name)
                 out_path = os.path.join(extract_dir, safe_name)
@@ -166,6 +175,28 @@ def process_document(file_path: str, upload_dir: str, file_content: bytes = None
             combined.append(f"=== {item['filename']} ===\n{item['text']}")
         return "\n\n".join(combined)
     return extract_file_text(file_path, ext)
+
+
+_EXTRACTION_FAILURE_MARKERS = (
+    "[ZIP extraction error", "[PDF extraction error", "[DOCX extraction error",
+    "[XLSX extraction error", "[PPTX extraction error", "[Text read error",
+    "[Unsupported file type", "[PPTX not extracted",
+)
+
+
+def extraction_failed(text: str) -> bool:
+    """True when `text` is an extractor error rather than document content.
+
+    These strings were being passed to the model as though they were the
+    solicitation. A model handed 237 characters of error text still returns a
+    confident checklist — of invented, generic requirements. Callers must check
+    this before treating extracted text as real, so a failed read surfaces as a
+    failure instead of as a plausible-looking checklist.
+    """
+    if not text or not text.strip():
+        return True
+    head = text.strip()[:400]
+    return any(marker in head for marker in _EXTRACTION_FAILURE_MARKERS)
 
 
 def truncate_for_ai(text: str, max_chars: int = 80000) -> str:

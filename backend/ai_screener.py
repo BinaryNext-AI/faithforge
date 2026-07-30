@@ -704,6 +704,12 @@ _FILENAME_ROLE_PATTERNS = [(re.compile(p, re.IGNORECASE), role) for p, role in _
 def _role_from_filename(filename: str) -> Optional[str]:
     """Role when the filename alone is conclusive, else None (ask the model)."""
     name = filename or ""
+    # A .zip is the whole solicitation package, not one document. Classifying
+    # it would judge every file inside by whatever happens to sit in the first
+    # 6k characters — one leading form or sign-in sheet could mark the entire
+    # package skippable and yield an empty checklist. Always authoritative.
+    if name.lower().endswith(".zip"):
+        return "solicitation"
     for regex, role in _FILENAME_ROLE_PATTERNS:
         if regex.search(name):
             return role
@@ -720,8 +726,14 @@ def classify_document_role(filename: str, text: str) -> str:
     from_name = _role_from_filename(filename)
     if from_name:
         return from_name
+    text = text or ""
+    # Same guard for any bundle of several documents (a zip's contents arrive
+    # as repeated "=== filename ===" blocks): a single role cannot describe the
+    # whole bundle, and guessing one from the opening pages risks skipping an
+    # entire solicitation.
+    if text.count("\n=== ") >= 1 or text.count("=== ") >= 2:
+        return "solicitation"
     try:
-        text = text or ""
         head = text[:6000]
         tail = text[-2000:] if len(text) > 6000 else ""
         prompt = CLASSIFY_DOCUMENT_ROLE_PROMPT.format(

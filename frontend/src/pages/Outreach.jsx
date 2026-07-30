@@ -21,7 +21,11 @@ const TABS = [
 
 export default function Outreach() {
   const [searchParams] = useSearchParams()
-  const [tab, setTab] = useState(searchParams.get('tab') === 'bulk' ? 'bulk' : 'single')
+  // Default to the bulk tab: it holds the standing work queue (drafts to send,
+  // leads never contacted, follow-ups due). Defaulting to "One Prospect" meant
+  // landing on Outreach and seeing none of it, which read as those features
+  // being missing entirely.
+  const [tab, setTab] = useState(searchParams.get('tab') === 'single' ? 'single' : 'bulk')
   const active = TABS.find(t => t.key === tab)
 
   return (

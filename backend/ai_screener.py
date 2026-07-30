@@ -825,6 +825,13 @@ SUBMITTALS ONLY — NOT ONGOING CONTRACT PERFORMANCE. Extract what the offeror s
 STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classify requirements):
 {keyword_library}
 
+HOW TO USE THE 13 CATEGORIES. Three of them describe LANGUAGE, not document types, and must never be used as a requirement's `category`:
+  * "Mandatory Requirement Keywords" (1) and "Compliance Language" (10) are how you RECOGNISE that something is required — they are triggers, not classifications.
+  * "Proposal Section Keywords" (2) is the correct `category` ONLY for format/structural requirements (volume split, tab order, page limits, numbering, file format, copies) — not for a document that merely happens to live in one of those sections.
+Every requirement naming an actual deliverable must be classified into one of the DOCUMENT-TYPE categories: Administrative Documents (3), Certifications and Compliance Forms (4), Legal and Registration Documents (5), Technical Proposal Documents (6), Experience and Personnel Documents (7), Pricing Documents (8), Attachments and Forms (9), Insurance Requirements (11), Financial Documents (12), or Contract Documents (13). If a deliverable seems to fit only category 1 or 10, you have found the trigger language — name the actual document it demands and classify THAT.
+
+FILL `required_file_format` AND `number_of_copies` ON THE REQUIREMENT THEY APPLY TO. If the solicitation says a submittal must be a searchable PDF, submitted in Excel, provided as a redacted second copy, or supplied as "one original and three copies", record it on that requirement's own field — not only as a standalone structural item. When a format or copy count applies to a whole volume, set it on that volume's requirement. Leave the field null when the document genuinely does not say; never guess a format because it is customary.
+
 EXISTING OPPORTUNITY DATA:
 {opportunity_context}
 

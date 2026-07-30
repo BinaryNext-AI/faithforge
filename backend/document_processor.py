@@ -38,6 +38,49 @@ def extract_docx_text(file_path: str) -> str:
         return f"[DOCX extraction error: {e}]"
 
 
+def extract_pptx_text(file_path: str) -> str:
+    """Text from a PowerPoint deck, including tables and speaker notes.
+
+    Pre-proposal conference decks are routinely included in solicitation
+    packages and sometimes state submission instructions or deadline changes.
+    A real 39-file package (MDOT TSOOPD2609) had its pre-proposal slides come
+    back as "[Unsupported file type: .pptx]" — silently invisible to the
+    checklist. If python-pptx isn't installed the message says so explicitly
+    rather than implying the file was read and found empty.
+    """
+    try:
+        from pptx import Presentation
+    except ImportError:
+        return ("[PPTX not extracted: python-pptx is not installed on this server — "
+                "this file's content was NOT reviewed. Convert it to PDF and re-upload.]")
+    try:
+        prs = Presentation(file_path)
+        slides_text = []
+        for index, slide in enumerate(prs.slides, start=1):
+            parts = []
+            for shape in slide.shapes:
+                if shape.has_text_frame and shape.text_frame.text.strip():
+                    parts.append(shape.text_frame.text.strip())
+                if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        cells = [c.text.strip() for c in row.cells]
+                        row_str = " | ".join(cells).strip(" |")
+                        if row_str:
+                            parts.append(row_str)
+            try:
+                if slide.has_notes_slide:
+                    notes = slide.notes_slide.notes_text_frame.text.strip()
+                    if notes:
+                        parts.append(f"[Speaker notes] {notes}")
+            except Exception:
+                pass
+            if parts:
+                slides_text.append(f"[Slide {index}]\n" + "\n".join(parts))
+        return "\n\n".join(slides_text)
+    except Exception as e:
+        return f"[PPTX extraction error: {e}]"
+
+
 def extract_xlsx_text(file_path: str) -> str:
     try:
         from openpyxl import load_workbook
@@ -88,6 +131,8 @@ def extract_file_text(file_path: str, ext: Optional[str] = None) -> str:
         return extract_docx_text(file_path)
     elif ext in (".xlsx", ".xls"):
         return extract_xlsx_text(file_path)
+    elif ext in (".pptx", ".ppt"):
+        return extract_pptx_text(file_path)
     elif ext == ".txt":
         try:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:

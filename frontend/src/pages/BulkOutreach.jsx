@@ -826,12 +826,39 @@ export default function BulkOutreach() {
                 <RefreshCw className={`w-3.5 h-3.5 ${loadingEmails ? 'animate-spin' : ''}`} />Refresh
               </button>
               {draftCount > 0 && (
-                <button onClick={handleBulkApprove} className="btn-primary text-xs px-3 flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5" />Approve All Drafts ({draftCount})
+                <button onClick={handleBulkApprove} className="btn-secondary text-xs px-3 flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5" />Approve all {draftCount}
                 </button>
               )}
+              {/* Send-all lives HERE, next to approve-all. It used to sit
+                  below the entire email list, so with 41 drafts the only way
+                  to find it was scrolling past every one of them. */}
+              <button
+                onClick={handleSendApproved}
+                disabled={sending || sendableApprovedCount === 0}
+                className="btn-primary text-xs px-3 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={sendableApprovedCount === 0 ? 'Approve some drafts first — and leads with no email address cannot be sent.' : ''}
+              >
+                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                Send all {sendableApprovedCount}{sendMode === 'dry_run' ? ' (dry run)' : ''}
+              </button>
             </div>
           </div>
+
+          {/* Why the send button may be disabled or lower than expected. */}
+          {(approvedCount > sendableApprovedCount || (draftCount > 0 && sendableApprovedCount === 0)) && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                {draftCount > 0 && sendableApprovedCount === 0 && (
+                  <>Nothing is sendable yet — approve drafts first. </>
+                )}
+                {approvedCount > sendableApprovedCount && (
+                  <>{approvedCount - sendableApprovedCount} approved email{approvedCount - sendableApprovedCount === 1 ? '' : 's'} cannot send because the lead has no email address. Use “Find email” on those, or they will be skipped.</>
+                )}
+              </span>
+            </div>
+          )}
 
           <div className="space-y-3">
             {emails.length === 0 ? (

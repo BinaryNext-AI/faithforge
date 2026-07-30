@@ -364,8 +364,20 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
     <div className="card p-5 space-y-4">
       <button onClick={() => setExpanded(e => !e)} className="w-full flex items-center justify-between text-left">
         <div>
-          <h3 className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+          <h3 className="font-semibold text-gray-900 text-sm flex items-center gap-2 flex-wrap">
             Detailed Compliance Requirements
+            {/* Counts in the header: collapsed with a bare title, this read as
+                an empty section even when it held dozens of requirements. */}
+            {requirements.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-semibold">
+                {requirements.length} requirement{requirements.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {coverageGaps.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-semibold">
+                {coverageGaps.length} possible gap{coverageGaps.length === 1 ? '' : 's'}
+              </span>
+            )}
             {parsed.unverified_count > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 text-[10px] font-semibold">
                 {parsed.unverified_count} unverified
@@ -373,7 +385,9 @@ function DetailedRequirementsSection({ structuredChecklistJson }) {
             )}
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Structured, category-classified breakdown of every extracted requirement — reference only, not a second checklist gate.
+            {requirements.length > 0
+              ? `Every required submittal the AI found, classified by category. Click to ${expanded ? 'hide' : 'view'}.`
+              : 'Structured breakdown of extracted requirements — reference only, not a second checklist gate.'}
           </p>
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />}

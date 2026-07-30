@@ -4,7 +4,7 @@ import {
   Mail, RefreshCw, FileText, ChevronRight, Loader2,
   TrendingUp, Clock, Package, CheckCircle, AlertCircle, Inbox, CalendarClock
 } from 'lucide-react'
-import { getDashboardStats, scanEmail, getScanStatus } from '../api'
+import { getDashboardStats, scanEmail, getScanStatus, outreachUncontacted, outreachFollowUpsDue } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
 const PIPELINE = [
@@ -26,6 +26,28 @@ export default function Dashboard() {
   const [loading, setLoading]        = useState(true)
   const [error, setError]            = useState(null)
   const [daysBack, setDaysBack]      = useState(30)
+  // Outreach work waiting on a human. This lived only inside the Outreach
+  // page's second tab, so it was invisible from the landing screen.
+  const [outreachTodo, setOutreachTodo] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      outreachUncontacted().catch(() => null),
+      outreachFollowUpsDue().catch(() => null),
+    ]).then(([unc, due]) => {
+      if (cancelled) return
+      const followUpsDue = due?.totals
+        ? Object.values(due.totals).reduce((a, b) => a + (b || 0), 0)
+        : 0
+      setOutreachTodo({
+        readyToDraft: unc?.ready_total || 0,
+        drafted: unc?.already_drafted_total || 0,
+        followUpsDue,
+      })
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const load = useCallback(async () => {
     try { const d = await getDashboardStats(); setStats(d); setError(null) }
@@ -61,8 +83,41 @@ export default function Dashboard() {
   const packetReady = (byStatus['Packet Building'] || 0) + (byStatus['Packet Ready'] || 0) + (byStatus['Reviewed by User'] || 0)
   const approved = byStatus['Approved to Pursue'] || 0
 
+  const outreachTotal = outreachTodo
+    ? outreachTodo.readyToDraft + outreachTodo.drafted + outreachTodo.followUpsDue
+    : 0
+
   return (
     <div className="space-y-6">
+
+      {/* Outreach waiting on you — surfaced here because it previously lived
+          only inside the Outreach page's second tab and went unnoticed. */}
+      {outreachTotal > 0 && (
+        <div className="card p-4 border-2 border-blue-200 bg-blue-50/40">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-blue-900 flex items-center gap-1.5">
+                <Mail className="w-4 h-4 text-blue-600" />Outreach waiting on you
+              </p>
+              <p className="text-xs text-blue-700 mt-0.5">
+                {outreachTodo.drafted > 0 && (
+                  <span className="mr-3"><strong>{outreachTodo.drafted}</strong> draft{outreachTodo.drafted === 1 ? '' : 's'} ready to review &amp; send.</span>
+                )}
+                {outreachTodo.readyToDraft > 0 && (
+                  <span className="mr-3"><strong>{outreachTodo.readyToDraft}</strong> lead{outreachTodo.readyToDraft === 1 ? '' : 's'} never contacted.</span>
+                )}
+                {outreachTodo.followUpsDue > 0 && (
+                  <span><strong>{outreachTodo.followUpsDue}</strong> follow-up{outreachTodo.followUpsDue === 1 ? '' : 's'} due.</span>
+                )}
+              </p>
+            </div>
+            <Link to="/outreach?tab=bulk" className="btn-primary text-sm px-4 flex items-center gap-2 shrink-0">
+              <Mail className="w-4 h-4" />Go to Outreach
+              <ChevronRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Top bar */}
       <div className="flex items-center justify-between">

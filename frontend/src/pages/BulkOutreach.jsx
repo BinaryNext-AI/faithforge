@@ -132,6 +132,27 @@ export default function BulkOutreach() {
     }
   }
 
+  // Open drafts that already exist from an earlier session. Without this the
+  // panel could report "17 already drafted" with no way to reach them.
+  const handleReviewExistingDrafts = async () => {
+    setDraftingUncontacted(true)
+    setError(null)
+    try {
+      const [drafts, approved] = await Promise.all([
+        outreachGetEmails({ status: 'draft' }),
+        outreachGetEmails({ status: 'approved' }),
+      ])
+      setCurrentBatch(null)
+      setStatusFilter('')
+      setEmails([...drafts, ...approved])
+      setStep('review')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDraftingUncontacted(false)
+    }
+  }
+
   // Draft first emails for every never-contacted lead, then drop straight into
   // the normal review step — nothing sends without approval.
   const handleDraftUncontacted = async () => {
@@ -289,12 +310,24 @@ export default function BulkOutreach() {
   // ── Review ──────────────────────────────────────────────────────────────
 
   const refreshEmails = async () => {
-    if (!currentBatch) return
     setLoadingEmails(true)
     try {
-      const params = { batch_id: currentBatch.id }
-      if (statusFilter) params.status = statusFilter
-      const result = await outreachGetEmails(params)
+      let result
+      if (currentBatch) {
+        const params = { batch_id: currentBatch.id }
+        if (statusFilter) params.status = statusFilter
+        result = await outreachGetEmails(params)
+      } else if (statusFilter) {
+        // Reviewing drafts left over from an earlier session, so there is no
+        // batch to scope by — filter by status alone.
+        result = await outreachGetEmails({ status: statusFilter })
+      } else {
+        const [drafts, approved] = await Promise.all([
+          outreachGetEmails({ status: 'draft' }),
+          outreachGetEmails({ status: 'approved' }),
+        ])
+        result = [...drafts, ...approved]
+      }
       setEmails(result)
     } catch (err) {
       setError(err.message)
@@ -477,6 +510,9 @@ export default function BulkOutreach() {
                 {uncontacted.already_drafted_total > 0 && (
                   <span className="mr-3">{uncontacted.already_drafted_total} already drafted, awaiting review — not re-drafted.</span>
                 )}
+                {uncontacted.missing_email > 0 && uncontacted.ready_total === 0 && uncontacted.already_drafted_total === 0 && (
+                  <span className="mr-3">Nothing left to draft.</span>
+                )}
                 {uncontacted.missing_email > 0 && (
                   <span className="mr-3">{uncontacted.missing_email} skipped: no email address.</span>
                 )}
@@ -487,14 +523,26 @@ export default function BulkOutreach() {
               <button onClick={refreshUncontacted} disabled={uncontactedLoading} className="btn-secondary text-xs flex items-center gap-1.5">
                 <RefreshCw className={`w-3.5 h-3.5 ${uncontactedLoading ? 'animate-spin' : ''}`} />Refresh
               </button>
-              <button
-                onClick={handleDraftUncontacted}
-                disabled={draftingUncontacted || uncontacted.ready_total === 0}
-                className="btn-primary text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                Draft emails for all {uncontacted.ready_total}
-              </button>
+              {uncontacted.already_drafted_total > 0 && (
+                <button
+                  onClick={handleReviewExistingDrafts}
+                  disabled={draftingUncontacted}
+                  className="btn-primary text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                  Review &amp; send {uncontacted.already_drafted_total} draft{uncontacted.already_drafted_total === 1 ? '' : 's'}
+                </button>
+              )}
+              {uncontacted.ready_total > 0 && (
+                <button
+                  onClick={handleDraftUncontacted}
+                  disabled={draftingUncontacted}
+                  className={`text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${uncontacted.already_drafted_total > 0 ? 'btn-secondary' : 'btn-primary'}`}
+                >
+                  {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  Draft emails for all {uncontacted.ready_total}
+                </button>
+              )}
             </div>
           </div>
 

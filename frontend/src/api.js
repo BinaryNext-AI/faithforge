@@ -62,7 +62,14 @@ export const uploadDocument = (opportunityId, file) => {
 }
 export const getDocuments = (opportunityId) => api.get(`/opportunities/${opportunityId}/documents`).then(r => r.data)
 export const deleteDocument = (opportunityId, docId) => api.delete(`/opportunities/${opportunityId}/documents/${docId}`).then(r => r.data)
-export const reviewDocuments = (opportunityId) => api.post(`/opportunities/${opportunityId}/documents/review`).then(r => r.data)
+// 10 min, matching the other heavy AI calls (packet build, draft completion).
+// This is the LONGEST operation in the app — it role-classifies every uploaded
+// document, then makes one extraction call per chunk — and it was the only one
+// left on the 5 min default. A large package (39 files) can exceed that, and
+// on timeout the browser aborts while the backend keeps going and saves the
+// result: the user sees a failure for a review that actually succeeded.
+export const reviewDocuments = (opportunityId) =>
+  api.post(`/opportunities/${opportunityId}/documents/review`, {}, { timeout: 600000 }).then(r => r.data)
 
 // Pre-Submission Gap Check (step 5 of Bernedette's workflow) — caller
 // explicitly designates which materials make up the RESPONSE package

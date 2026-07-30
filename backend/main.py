@@ -2163,6 +2163,70 @@ def outreach_follow_ups_due(db: Session = Depends(get_db), _: None = Depends(req
     }
 
 
+@app.get("/api/outreach/uncontacted")
+def outreach_uncontacted(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    """Every lead that has never been contacted, regardless of which import it
+    came from.
+
+    Generation previously only reached the account IDs committed during the
+    current upload session, so if a sheet was imported and only part of it was
+    sent, the remainder became unreachable without re-importing the file. This
+    is the standing "who still needs a first email" list.
+
+    Leads that cannot actually be emailed are counted separately rather than
+    silently dropped — a smaller number than the sheet had is exactly the kind
+    of thing that should be explained, not hidden.
+    """
+    accounts = (
+        db.query(Account)
+        .filter((Account.stage == "Not Contacted") | (Account.stage.is_(None)))
+        .all()
+    )
+
+    # Which of these already have a drafted-but-unsent email, so the UI can
+    # avoid drafting a second copy for the same person.
+    drafted_ids = {
+        row[0]
+        for row in db.query(OutreachEmail.account_id)
+        .filter(
+            OutreachEmail.sequence_step == 0,
+            OutreachEmail.status.in_(("draft", "approved", "failed")),
+        )
+        .all()
+    }
+
+    ready, drafted, missing_email, opted_out = [], [], 0, 0
+    for acc in accounts:
+        if acc.do_not_contact:
+            opted_out += 1
+            continue
+        if not (acc.contact_email or "").strip():
+            missing_email += 1
+            continue
+        item = {
+            "account_id": acc.id,
+            "company_name": acc.company_name,
+            "contact_name": acc.contact_name,
+            "contact_email": acc.contact_email,
+            "segment": acc.segment,
+            "priority_score": acc.priority_score,
+        }
+        (drafted if acc.id in drafted_ids else ready).append(item)
+
+    # Highest-priority leads first so a partial send hits the best ones.
+    ready.sort(key=lambda x: (x["priority_score"] is None, -(x["priority_score"] or 0)))
+    drafted.sort(key=lambda x: (x["priority_score"] is None, -(x["priority_score"] or 0)))
+
+    return {
+        "ready": ready,
+        "ready_total": len(ready),
+        "already_drafted": drafted,
+        "already_drafted_total": len(drafted),
+        "missing_email": missing_email,
+        "opted_out": opted_out,
+    }
+
+
 @app.post("/api/outreach/follow-ups/generate")
 def outreach_generate_follow_ups(
     body: OutreachFollowUpRequest,

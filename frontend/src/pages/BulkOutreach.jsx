@@ -10,7 +10,7 @@ import {
   outreachGetEmails, outreachUpdateEmail, outreachApproveEmail, outreachUnapproveEmail,
   outreachBulkApprove, outreachSendOne, outreachSendBulk, getSettings,
   outreachGenerateFollowUps, outreachFindEmail, updateAccount,
-  outreachDetectReplies, outreachFollowUpsDue,
+  outreachDetectReplies, outreachFollowUpsDue, outreachUncontacted,
 } from '../api'
 
 const SEQUENCE_STEP_LABELS = { 1: 'Follow-up 1', 2: 'Follow-up 2', 3: 'Follow-up 3', 4: 'Breakup' }
@@ -86,6 +86,12 @@ export default function BulkOutreach() {
   const [detectLoading, setDetectLoading] = useState(false)
   const [detectNotice, setDetectNotice] = useState(null)
 
+  // Never-contacted panel — leads from ANY past import that still have no
+  // first email, not just the ones committed in this upload session.
+  const [uncontacted, setUncontacted] = useState(null)
+  const [uncontactedLoading, setUncontactedLoading] = useState(false)
+  const [draftingUncontacted, setDraftingUncontacted] = useState(false)
+
   useEffect(() => {
     getSettings().then(data => {
       const map = {}
@@ -94,6 +100,7 @@ export default function BulkOutreach() {
       setOutreachFromEmail(map.OUTREACH_FROM_EMAIL || '')
     }).catch(() => {})
     refreshDueCounts()
+    refreshUncontacted()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -109,6 +116,42 @@ export default function BulkOutreach() {
       setError(err.message)
     } finally {
       setDueLoading(false)
+    }
+  }
+
+  const refreshUncontacted = async () => {
+    setUncontactedLoading(true)
+    try {
+      setUncontacted(await outreachUncontacted())
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setUncontactedLoading(false)
+    }
+  }
+
+  // Draft first emails for every never-contacted lead, then drop straight into
+  // the normal review step — nothing sends without approval.
+  const handleDraftUncontacted = async () => {
+    const ids = (uncontacted?.ready || []).map(l => l.account_id)
+    if (ids.length === 0) return
+    setDraftingUncontacted(true)
+    setError(null)
+    setGenNotice(null)
+    try {
+      const result = await outreachGenerate(ids, 'sync', generateModel || null)
+      setCurrentBatch(result.batch)
+      setEmails(result.emails || [])
+      setStep('review')
+      const skipped = (result.skipped_contacted || 0) + (result.skipped_do_not_contact || 0)
+      if (skipped > 0) {
+        setGenNotice(`${skipped} lead(s) were skipped — already contacted or opted out — so nobody gets a duplicate intro.`)
+      }
+      await refreshUncontacted()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDraftingUncontacted(false)
     }
   }
 
@@ -411,6 +454,65 @@ export default function BulkOutreach() {
         <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span><strong>Dry-run mode:</strong> sends route to a test address, not real prospects. Switch to live mode in Settings when ready.</span>
+        </div>
+      )}
+
+      {/* Never-contacted leads — visible on any step. Covers leads left over
+          from an earlier import that were never emailed; previously only the
+          accounts committed in the current upload session could be drafted. */}
+      {uncontacted && (uncontacted.ready_total > 0 || uncontacted.already_drafted_total > 0) && (
+        <div className="card p-5 space-y-4 border-2 border-blue-200 bg-blue-50/40">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-blue-900 flex items-center gap-1.5">
+                <Mail className="w-4 h-4 text-blue-600" />
+                {uncontacted.ready_total} lead{uncontacted.ready_total === 1 ? '' : 's'} never contacted
+              </p>
+              <p className="text-xs text-blue-700 mt-0.5">
+                From every import, not just your latest upload. Draft them all in one go — you still review and approve each email before anything sends.
+              </p>
+              <p className="text-xs text-blue-600/80 mt-1">
+                {uncontacted.already_drafted_total > 0 && (
+                  <span className="mr-3">{uncontacted.already_drafted_total} already drafted, awaiting review — not re-drafted.</span>
+                )}
+                {uncontacted.missing_email > 0 && (
+                  <span className="mr-3">{uncontacted.missing_email} skipped: no email address.</span>
+                )}
+                {uncontacted.opted_out > 0 && <span>{uncontacted.opted_out} skipped: opted out.</span>}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={refreshUncontacted} disabled={uncontactedLoading} className="btn-secondary text-xs flex items-center gap-1.5">
+                <RefreshCw className={`w-3.5 h-3.5 ${uncontactedLoading ? 'animate-spin' : ''}`} />Refresh
+              </button>
+              <button
+                onClick={handleDraftUncontacted}
+                disabled={draftingUncontacted || uncontacted.ready_total === 0}
+                className="btn-primary text-sm px-4 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {draftingUncontacted ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Draft emails for all {uncontacted.ready_total}
+              </button>
+            </div>
+          </div>
+
+          {uncontacted.ready_total > 0 && (
+            <div className="bg-white rounded-lg border border-blue-200 p-3">
+              <ul className="space-y-1">
+                {uncontacted.ready.slice(0, 6).map(lead => (
+                  <li key={lead.account_id} className="text-xs text-gray-600 flex items-center justify-between gap-3">
+                    <span className="truncate">
+                      {lead.company_name}{lead.contact_name ? ` — ${lead.contact_name}` : ''}
+                    </span>
+                    <span className="shrink-0 text-gray-400 truncate max-w-[45%]">{lead.contact_email}</span>
+                  </li>
+                ))}
+                {uncontacted.ready_total > 6 && (
+                  <li className="text-xs text-gray-400">+{uncontacted.ready_total - 6} more</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

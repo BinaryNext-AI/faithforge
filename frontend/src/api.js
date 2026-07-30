@@ -154,6 +154,10 @@ export const outreachDetectReplies = () =>
   api.post('/outreach/detect-replies').then(r => r.data)
 export const outreachFollowUpsDue = () =>
   api.get('/outreach/follow-ups/due').then(r => r.data)
+// Standing "who has never been emailed" list, across every import — not just
+// the accounts committed in the current upload session.
+export const outreachUncontacted = () =>
+  api.get('/outreach/uncontacted').then(r => r.data)
 export const outreachGenerateFollowUps = (step, accountIds = null, model = null) =>
   api.post('/outreach/follow-ups/generate', { step, account_ids: accountIds, model }, { timeout: 600000 }).then(r => r.data)
 export const outreachFindEmail = (accountId) =>

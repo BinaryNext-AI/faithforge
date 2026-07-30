@@ -6,7 +6,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 from fastapi import (
     FastAPI, Depends, HTTPException, UploadFile, File, Form,
@@ -2132,6 +2132,72 @@ def _accounts_due_for_follow_up(db: Session) -> Dict[int, List[Dict]]:
     return grouped
 
 
+def _follow_up_diagnostics(db: Session) -> Dict[str, Any]:
+    """Explain WHY no follow-ups are due, instead of showing an empty panel.
+
+    "I don't see anything related to a follow-up" has several very different
+    causes that all look identical (nothing on screen):
+      * every send was a dry run — outreach_sender only sets awaiting_reply on
+        a real send, so dry-run sends never enter the sequence at all;
+      * a lead is flagged awaiting_reply but has no SENT email row, so
+        _accounts_due_for_follow_up skips it silently;
+      * the cadence interval simply hasn't elapsed yet.
+    Reporting these separately turns a blank screen into an answer.
+    """
+    intervals = _sequence_intervals()
+    now = datetime.utcnow()
+
+    sent_live = db.query(OutreachEmail).filter(
+        OutreachEmail.status == "sent", OutreachEmail.was_dry_run.is_(False)).count()
+    sent_dry_run = db.query(OutreachEmail).filter(
+        OutreachEmail.status == "sent", OutreachEmail.was_dry_run.is_(True)).count()
+
+    awaiting = (db.query(Account)
+                .filter(Account.awaiting_reply.is_(True),
+                        Account.replied_at.is_(None),
+                        Account.do_not_contact.is_(False))
+                .all())
+
+    orphaned, not_yet_due = [], []
+    for acc in awaiting:
+        last_sent = (db.query(OutreachEmail)
+                     .filter(OutreachEmail.account_id == acc.id,
+                             OutreachEmail.status == "sent")
+                     .order_by(desc(OutreachEmail.sent_at))
+                     .first())
+        if not last_sent or not last_sent.sent_at:
+            # Marked as contacted but with no sent email behind it — e.g. the
+            # stage was set by hand or the email row was removed. Previously
+            # invisible; surfaced so it can be corrected rather than ignored.
+            orphaned.append({
+                "account_id": acc.id, "company_name": acc.company_name,
+                "contact_name": acc.contact_name,
+                "last_contacted_at": acc.last_contacted_at,
+            })
+            continue
+        next_step = (last_sent.sequence_step or 0) + 1
+        if next_step > 4:
+            continue
+        due_at = last_sent.sent_at + timedelta(days=intervals[next_step - 1])
+        if now < due_at:
+            not_yet_due.append({
+                "account_id": acc.id, "company_name": acc.company_name,
+                "next_step": next_step,
+                "days_until_due": max(0, (due_at - now).days),
+            })
+
+    return {
+        "sent_live": sent_live,
+        "sent_dry_run": sent_dry_run,
+        "awaiting_reply": len(awaiting),
+        "orphaned_awaiting": orphaned,
+        "orphaned_awaiting_total": len(orphaned),
+        "not_yet_due": sorted(not_yet_due, key=lambda x: x["days_until_due"])[:10],
+        "not_yet_due_total": len(not_yet_due),
+        "intervals": intervals,
+    }
+
+
 @app.post("/api/outreach/detect-replies")
 def outreach_detect_replies(db: Session = Depends(get_db), _: None = Depends(require_auth)):
     """Reads the inbox once and flips awaiting_reply/replied_at for any
@@ -2160,6 +2226,7 @@ def outreach_follow_ups_due(db: Session = Depends(get_db), _: None = Depends(req
         "due": {str(step): items for step, items in grouped.items()},
         "totals": totals,
         "detect_replies": detect_summary,
+        "diagnostics": _follow_up_diagnostics(db),
     }
 
 

@@ -81,6 +81,7 @@ export default function BulkOutreach() {
   const [dueTotals, setDueTotals] = useState(null)          // {"1": N, "2": N, "3": N, "4": N}
   const [dueDetail, setDueDetail] = useState({})            // {"1": [{account_id, company_name, contact_name, days_waiting}, ...], ...}
   const [dueLoading, setDueLoading] = useState(false)
+  const [dueDiag, setDueDiag] = useState(null)          // why nothing is due, when nothing is due
   const [followUpLoading, setFollowUpLoading] = useState(null) // which step is generating, or null
   const [followUpNotice, setFollowUpNotice] = useState(null)
   const [detectLoading, setDetectLoading] = useState(false)
@@ -112,6 +113,7 @@ export default function BulkOutreach() {
       const result = await outreachFollowUpsDue()
       setDueTotals(result.totals || {})
       setDueDetail(result.due || {})
+      setDueDiag(result.diagnostics || null)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -513,6 +515,49 @@ export default function BulkOutreach() {
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Nothing due — say WHY rather than rendering nothing at all. An empty
+          screen reads as "the follow-up feature is missing"; these are the
+          actual reasons the sequence has no work. */}
+      {dueTotals && !Object.values(dueTotals).some(n => n > 0) && dueDiag && (
+        <div className="card p-4 border border-gray-200 bg-gray-50/60">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-gray-400" />No follow-ups due right now
+              </p>
+              <ul className="text-xs text-gray-600 mt-1.5 space-y-1">
+                {dueDiag.sent_live === 0 && dueDiag.sent_dry_run > 0 && (
+                  <li className="text-amber-700">
+                    <strong>{dueDiag.sent_dry_run} email{dueDiag.sent_dry_run === 1 ? '' : 's'} were sent in dry-run mode.</strong> Dry-run sends never enter the follow-up sequence — only live sends start the clock. Switch send mode to live in Settings.
+                  </li>
+                )}
+                {dueDiag.sent_live === 0 && dueDiag.sent_dry_run === 0 && (
+                  <li>No emails have been sent yet, so there is nothing to follow up on.</li>
+                )}
+                {dueDiag.not_yet_due_total > 0 && (
+                  <li>
+                    {dueDiag.not_yet_due_total} lead{dueDiag.not_yet_due_total === 1 ? '' : 's'} waiting — next one due in{' '}
+                    {dueDiag.not_yet_due[0]?.days_until_due ?? 0} day{dueDiag.not_yet_due[0]?.days_until_due === 1 ? '' : 's'} (cadence: {(dueDiag.intervals || []).join(', ')} days).
+                  </li>
+                )}
+                {dueDiag.orphaned_awaiting_total > 0 && (
+                  <li className="text-amber-700">
+                    <strong>{dueDiag.orphaned_awaiting_total} lead{dueDiag.orphaned_awaiting_total === 1 ? '' : 's'} marked contacted but with no sent email on record</strong> ({dueDiag.orphaned_awaiting.slice(0, 3).map(o => o.company_name).join(', ')}
+                    {dueDiag.orphaned_awaiting_total > 3 ? ', …' : ''}). The sequence can't schedule a follow-up without a send date — check these manually.
+                  </li>
+                )}
+                {dueDiag.sent_live > 0 && dueDiag.awaiting_reply === 0 && (
+                  <li>{dueDiag.sent_live} live email{dueDiag.sent_live === 1 ? '' : 's'} sent, but no leads are awaiting a reply — they may have replied already or been closed.</li>
+                )}
+              </ul>
+            </div>
+            <button onClick={refreshDueCounts} disabled={dueLoading} className="btn-secondary text-xs flex items-center gap-1.5 shrink-0">
+              <RefreshCw className={`w-3.5 h-3.5 ${dueLoading ? 'animate-spin' : ''}`} />Refresh
+            </button>
+          </div>
         </div>
       )}
 

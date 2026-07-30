@@ -832,7 +832,16 @@ Emit each with `"category": "Proposal Section Keywords"` and a `document_name` n
 
 ONE REQUIREMENT PER DOCUMENT, NOT PER FIELD. If several lines are fields, signature blocks, or numbered clauses INSIDE a single named form, emit ONE requirement for that form — not one per line. For example a Bid/Proposal Affidavit containing "Affirmation Regarding Bribery Convictions", "Affirmation Regarding Collusion", "Signature of Authorized Representative" and "Printed Name of Affiant" is ONE requirement ("Bid/Proposal Affidavit"), with the notable sub-parts summarized in `notes`. Splitting a form into its own fields buries the real checklist in noise.
 
-SUBMITTALS ONLY — NOT ONGOING CONTRACT PERFORMANCE. Extract what the offeror submits WITH THE PROPOSAL, plus one-time documents explicitly required upon notice of award (e.g. a Contract Affidavit, an NDA, an insurance certificate due within N days of award) — mark those `"due_before_submission": false` and say so in `notes`. Do NOT emit recurring obligations performed AFTER award during the contract term: monthly invoices, timesheets, quarterly or annual reports, notices of claim, price-adjustment requests, personnel substitution requests, performance-evaluation forms. Those are contract administration, not checklist items.
+SUBMITTALS ONLY — NOT WORK THE CONTRACT WILL LATER PRODUCE. This checklist answers ONE question: what goes in the envelope/upload at bid time. Before emitting anything, ask "would this be missing from the bid packet on submission day?" If it would not exist until after award, it does not belong here.
+
+INCLUDE: documents submitted WITH the proposal, and one-time documents explicitly required upon notice of award (Contract Affidavit, NDA, insurance certificate due within N days of award) — mark those `"due_before_submission": false` and say so in `notes`.
+
+DO NOT INCLUDE, even though the RFP says "shall provide" about them:
+  * SCOPE-OF-WORK DELIVERABLES the contractor will produce during the engagement — communication plans, transition plans, training plans, implementation or work plans described in the Scope of Work, customer surveys, tracking protocols, campaign plans, dashboards, studies. The RFP describes these because they are the WORK; they are not attachments to the bid. (Exception: if a section explicitly requires a DRAFT of one to be submitted with the proposal — e.g. "provide a draft Problem Escalation Procedure with your Technical Proposal" — that IS a submittal.)
+  * Recurring contract administration: monthly invoices, timesheets, quarterly or annual reports, notices of claim, price-adjustment requests, personnel substitution requests.
+  * The AGENCY's own forms and processes: performance-evaluation forms the contract manager completes, meeting sign-in sheets, internal review procedures.
+  * Contract CLAUSES rather than documents: indemnification terms, nondiscrimination clauses required in subcontracts, records-retention obligations, termination-notice provisions. A clause the contract imposes is not a document the offeror attaches.
+Over-listing is not harmless — a checklist padded with contract terms buries the forms that actually get a bid rejected.
 
 STRUCTURED KEYWORD LIBRARY (13 categories — use these to recognize and classify requirements):
 {keyword_library}

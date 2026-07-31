@@ -82,16 +82,37 @@ function parseChecklistItems(text) {
     })
 }
 
+// Tick state is keyed by requirement TEXT, not by position. Re-running the AI
+// review rewrites submission_checklist, and item order/count changes with it —
+// under the old index keys, ticking "W-9" at position 3 left position 3 ticked
+// after the re-run, whichever requirement had moved into that slot. That
+// silently marks an un-gathered mandatory form as gathered, the exact failure
+// this checklist exists to prevent. Text keys go stale safely: a renamed item
+// comes back unticked (visible, correctable) instead of falsely ticked.
+function checklistKeys(items) {
+  const seen = new Map()
+  return items.map(item => {
+    const base = item.text.toLowerCase().replace(/\s+/g, ' ').trim()
+    const n = (seen.get(base) || 0) + 1
+    seen.set(base, n)
+    return n > 1 ? `${base}#${n}` : base
+  })
+}
+
 function SubmissionChecklist({ text, opportunityId, onProgressChange }) {
-  const storageKey = `ff_checklist_${opportunityId}`
+  // v2 = text-keyed. The old `ff_checklist_<id>` index-keyed entries are
+  // deliberately not migrated; there is no way to tell which requirement an
+  // old index referred to, so re-deriving them would just re-create the bug.
+  const storageKey = `ff_checklist_v2_${opportunityId}`
   const items = parseChecklistItems(text)
+  const keys = checklistKeys(items)
   const [checked, setChecked] = useState(() => {
     let stored = {}
     try { stored = JSON.parse(localStorage.getItem(storageKey) || '{}') } catch {}
     const next = { ...stored }
     let changed = false
     items.forEach((item, i) => {
-      if (item.onFile && !(i in next)) { next[i] = true; changed = true }
+      if (item.onFile && !(keys[i] in next)) { next[keys[i]] = true; changed = true }
     })
     if (changed) localStorage.setItem(storageKey, JSON.stringify(next))
     return next
@@ -99,20 +120,20 @@ function SubmissionChecklist({ text, opportunityId, onProgressChange }) {
   const [expanded, setExpanded] = useState(true)
 
   useEffect(() => {
-    const done = items.filter((_, i) => checked[i]).length
-    const unchecked = items.filter((_, i) => !checked[i]).map(item => item.text)
+    const done = items.filter((_, i) => checked[keys[i]]).length
+    const unchecked = items.filter((_, i) => !checked[keys[i]]).map(item => item.text)
     onProgressChange?.(done, items.length, unchecked)
-  }, [checked]) // eslint-disable-line
+  }, [checked, text]) // eslint-disable-line
 
   const toggle = (i) => {
-    const next = { ...checked, [i]: !checked[i] }
+    const next = { ...checked, [keys[i]]: !checked[keys[i]] }
     setChecked(next)
     localStorage.setItem(storageKey, JSON.stringify(next))
   }
 
   const reset = () => { setChecked({}); localStorage.removeItem(storageKey) }
 
-  const done = items.filter((_, i) => checked[i]).length
+  const done = items.filter((_, i) => checked[keys[i]]).length
   const pct = items.length ? Math.round((done / items.length) * 100) : 0
 
   return (
@@ -141,20 +162,20 @@ function SubmissionChecklist({ text, opportunityId, onProgressChange }) {
       {expanded && (
         <ul className="space-y-1.5">
           {items.map((item, i) => (
-            <li key={i} onClick={() => toggle(i)}
+            <li key={keys[i]} onClick={() => toggle(i)}
               className={`flex items-start gap-3 text-sm cursor-pointer rounded-lg px-3 py-2.5 hover:bg-gray-50 transition-colors border ${
-                checked[i] ? 'border-emerald-100 bg-emerald-50/40' : 'border-transparent'
+                checked[keys[i]] ? 'border-emerald-100 bg-emerald-50/40' : 'border-transparent'
               }`}>
               <div className={`mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center transition-colors ${
-                checked[i] ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 bg-white'
+                checked[keys[i]] ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 bg-white'
               }`}>
-                {checked[i] && <CheckCircle className="w-3 h-3 text-white" />}
+                {checked[keys[i]] && <CheckCircle className="w-3 h-3 text-white" />}
               </div>
-              <span className={`flex-1 leading-snug ${checked[i] ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+              <span className={`flex-1 leading-snug ${checked[keys[i]] ? 'line-through text-gray-400' : 'text-gray-800'}`}>
                 {item.text}
                 {item.onFile && <span className="ml-1.5 text-xs text-gray-400 no-underline">(on file)</span>}
               </span>
-              {checked[i] && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />}
+              {checked[keys[i]] && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />}
             </li>
           ))}
         </ul>
